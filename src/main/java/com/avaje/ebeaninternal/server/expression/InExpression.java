@@ -2,7 +2,9 @@ package com.avaje.ebeaninternal.server.expression;
 
 import java.util.Collection;
 
+import com.avaje.ebean.bean.EntityBean;
 import com.avaje.ebean.event.BeanQueryRequest;
+import com.avaje.ebeaninternal.api.HashQueryPlanBuilder;
 import com.avaje.ebeaninternal.api.SpiExpressionRequest;
 import com.avaje.ebeaninternal.server.el.ElPropertyValue;
 
@@ -12,13 +14,13 @@ class InExpression extends AbstractExpression {
 
   private final Object[] values;
 
-  InExpression(FilterExprPath pathPrefix, String propertyName, Collection<?> coll) {
-    super(pathPrefix, propertyName);
+  InExpression(String propertyName, Collection<?> coll) {
+    super(propertyName);
     values = coll.toArray(new Object[coll.size()]);
   }
 
-  InExpression(FilterExprPath pathPrefix, String propertyName, Object[] array) {
-    super(pathPrefix, propertyName);
+  InExpression(String propertyName, Object[] array) {
+    super(propertyName);
     this.values = array;
   }
 
@@ -35,7 +37,7 @@ class InExpression extends AbstractExpression {
 
       } else {
         // extract the id values from the bean
-        Object[] ids = prop.getAssocOneIdValues(values[i]);
+        Object[] ids = prop.getAssocOneIdValues((EntityBean)values[i]);
         if (ids != null) {
           for (int j = 0; j < ids.length; j++) {
             request.addBindValue(ids[j]);
@@ -79,19 +81,18 @@ class InExpression extends AbstractExpression {
   /**
    * Based on the number of values in the in clause.
    */
-  public int queryAutoFetchHash() {
-    int hc = InExpression.class.getName().hashCode() + 31 * values.length;
-    hc = hc * 31 + propName.hashCode();
-    return hc;
+  public void queryAutoFetchHash(HashQueryPlanBuilder builder) {
+    builder.add(InExpression.class).add(propName).add(values.length);
+    builder.bind(values.length);
   }
 
-  public int queryPlanHash(BeanQueryRequest<?> request) {
-    return queryAutoFetchHash();
+  public void queryPlanHash(BeanQueryRequest<?> request, HashQueryPlanBuilder builder) {
+    queryAutoFetchHash(builder);
   }
 
   public int queryBindHash() {
-    int hc = 0;
-    for (int i = 1; i < values.length; i++) {
+    int hc = 31;
+    for (int i = 0; i < values.length; i++) {
       hc = 31 * hc + values[i].hashCode();
     }
     return hc;

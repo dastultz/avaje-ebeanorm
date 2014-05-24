@@ -15,8 +15,6 @@ import java.util.List;
  * Typically you will not construct an OrderBy yourself but use one that exists
  * on the Query object.
  * </p>
- * 
- * @author rbygrave
  */
 public final class OrderBy<T> implements Serializable {
 
@@ -24,13 +22,17 @@ public final class OrderBy<T> implements Serializable {
 
   private transient Query<T> query;
 
-  private List<Property> list;
+  private final List<Property> list;
 
   /**
    * Create an empty OrderBy with no associated query.
    */
   public OrderBy() {
     this.list = new ArrayList<Property>(2);
+  }
+  
+  private OrderBy(List<Property> list) {
+    this.list = list;
   }
 
   /**
@@ -81,6 +83,17 @@ public final class OrderBy<T> implements Serializable {
     return query;
   }
 
+  /**
+   * Return a copy of this OrderBy with the path trimmed.
+   */
+  public OrderBy<T> copyWithTrim(String path) {
+    List<Property> newList = new ArrayList<Property>(list.size());
+    for (int i = 0; i < list.size(); i++) {
+      newList.add(list.get(i).copyWithTrim(path));
+    }
+    return new OrderBy<T>(newList);
+  }
+  
   /**
    * Return the properties for this OrderBy.
    */
@@ -153,31 +166,23 @@ public final class OrderBy<T> implements Serializable {
 
   @Override
   public boolean equals(Object obj) {
-    if (obj instanceof OrderBy<?>) {
-      if (obj == this) {
-        return true;
-      }
-      OrderBy<?> other = (OrderBy<?>) obj;
-      return hashCode() == other.hashCode();
+    if (obj == this) {
+      return true;
     }
-    return false;
-  }
-
-  @Override
-  public int hashCode() {
-    return hash();
+    if (!(obj instanceof OrderBy<?>)) {
+      return false;
+    }
+    
+    OrderBy<?> e = (OrderBy<?>) obj;
+    return e.list.equals(list);
   }
 
   /**
    * Return a hash value for this OrderBy. This can be to determine logical
    * equality for OrderBy clauses.
    */
-  public int hash() {
-    int hc = OrderBy.class.getName().hashCode();
-    for (int i = 0; i < list.size(); i++) {
-      hc = hc * 31 + list.get(i).hash();
-    }
-    return hc;
+  public int hashCode() {
+    return list.hashCode();
   }
 
   /**
@@ -196,10 +201,30 @@ public final class OrderBy<T> implements Serializable {
       this.ascending = ascending;
     }
 
-    protected int hash() {
+    /**
+     * Return a copy of this Property with the path trimmed.
+     */
+    public Property copyWithTrim(String path) {
+      return new Property(property.substring(path.length() + 1), ascending);
+    }
+
+    public int hashCode() {
       int hc = property.hashCode();
       hc = hc * 31 + (ascending ? 0 : 1);
       return hc;
+    }
+    
+    public boolean equals(Object obj) {
+      if (obj == this) {
+        return true;
+      }
+      if (!(obj instanceof Property)) {
+        return false;
+      }
+      
+      Property e = (Property) obj;
+      return e.ascending == ascending 
+          && e.property.equals(property);
     }
 
     public String toString() {

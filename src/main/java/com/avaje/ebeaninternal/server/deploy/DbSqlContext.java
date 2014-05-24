@@ -1,5 +1,7 @@
 package com.avaje.ebeaninternal.server.deploy;
 
+import com.avaje.ebeaninternal.server.query.SqlJoinType;
+
 /**
  * Used to provide context during sql construction.
  */
@@ -8,7 +10,7 @@ public interface DbSqlContext {
   /**
    * Add a join to the sql query.
    */
-  public void addJoin(String type, String table, TableJoinColumn[] cols, String a1, String a2);
+  public void addJoin(String type, String table, TableJoinColumn[] cols, String a1, String a2, String inheritance);
 
   public void pushSecondaryTableAlias(String alias);
 
@@ -72,7 +74,7 @@ public interface DbSqlContext {
    * Append a Sql Formula join. This converts the "${ta}" keyword to the current
    * table alias.
    */
-  public void appendFormulaJoin(String sqlFormulaJoin, boolean forceOuterJoin);
+  public void appendFormulaJoin(String sqlFormulaJoin, SqlJoinType joinType);
 
   /**
    * Return the current content length.

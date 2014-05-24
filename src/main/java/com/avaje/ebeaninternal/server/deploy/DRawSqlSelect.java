@@ -156,7 +156,6 @@ public class DRawSqlSelect {
 			}
 		}
 
-		selectProps.setIncludedProperties(includedProps);
 		SqlTreeNode sqlRoot = new SqlTreeNodeRoot(desc, selectProps, null, withId);
 		sqlTree.setRootNode(sqlRoot);
 

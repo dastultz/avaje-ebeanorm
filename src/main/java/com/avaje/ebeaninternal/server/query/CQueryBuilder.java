@@ -5,7 +5,6 @@ import java.util.Set;
 
 import javax.persistence.PersistenceException;
 
-import com.avaje.ebean.BackgroundExecutor;
 import com.avaje.ebean.RawSql;
 import com.avaje.ebean.RawSql.ColumnMapping;
 import com.avaje.ebean.RawSql.ColumnMapping.Column;
@@ -16,6 +15,7 @@ import com.avaje.ebean.config.dbplatform.SqlLimitRequest;
 import com.avaje.ebean.config.dbplatform.SqlLimitResponse;
 import com.avaje.ebean.config.dbplatform.SqlLimiter;
 import com.avaje.ebean.text.PathProperties;
+import com.avaje.ebeaninternal.api.ManyWhereJoins;
 import com.avaje.ebeaninternal.api.SpiQuery;
 import com.avaje.ebeaninternal.server.core.OrmQueryRequest;
 import com.avaje.ebeaninternal.server.deploy.BeanDescriptor;
@@ -43,8 +43,6 @@ public class CQueryBuilder implements Constants {
 
   private final Binder binder;
 
-  private final BackgroundExecutor backgroundExecutor;
-
   private final boolean selectCountWithAlias;
 
   private DatabasePlatform dbPlatform;
@@ -52,9 +50,8 @@ public class CQueryBuilder implements Constants {
   /**
    * Create the SqlGenSelect.
    */
-  public CQueryBuilder(BackgroundExecutor backgroundExecutor, DatabasePlatform dbPlatform, Binder binder) {
+  public CQueryBuilder(DatabasePlatform dbPlatform, Binder binder) {
 
-    this.backgroundExecutor = backgroundExecutor;
     this.binder = binder;
     this.tableAliasPlaceHolder = GlobalProperties.get("ebean.tableAliasPlaceHolder", "${ta}");
     this.columnAliasPrefix = GlobalProperties.get("ebean.columnAliasPrefix", "c");
@@ -102,8 +99,7 @@ public class CQueryBuilder implements Constants {
       // skip building the SqlTree and Sql string
       predicates.prepare(false);
       String sql = queryPlan.getSql();
-      return new CQueryFetchIds(request, predicates, sql, backgroundExecutor);
-
+      return new CQueryFetchIds(request, predicates, sql);
     }
 
     // use RawSql or generated Sql
@@ -114,10 +110,10 @@ public class CQueryBuilder implements Constants {
     String sql = s.getSql();
 
     // cache the query plan
-    queryPlan = new CQueryPlan(sql, sqlTree, false, s.isIncludesRowNumberColumn(), predicates.getLogWhereSql());
+    queryPlan = new CQueryPlan(request, sql, sqlTree, false, s.isIncludesRowNumberColumn(), predicates.getLogWhereSql());
 
     request.putQueryPlan(queryPlan);
-    return new CQueryFetchIds(request, predicates, sql, backgroundExecutor);
+    return new CQueryFetchIds(request, predicates, sql);
   }
 
   /**
@@ -130,9 +126,16 @@ public class CQueryBuilder implements Constants {
     // always set the order by to null for row count query
     query.setOrder(null);
 
-    boolean hasMany = !query.getManyWhereJoins().isEmpty();
-
-    query.setSelectId();
+    ManyWhereJoins manyWhereJoins = query.getManyWhereJoins();
+    
+    boolean hasMany = manyWhereJoins.isHasMany();
+    if (manyWhereJoins.isSelectId()) {
+      // just select the id property
+      query.setSelectId();
+    } else {
+      // select the id and the required formula properties
+      query.select(manyWhereJoins.getFormulaProperties());
+    }
 
     String sqlSelect = "select count(*)";
     if (hasMany) {
@@ -163,7 +166,7 @@ public class CQueryBuilder implements Constants {
     }
 
     // cache the query plan
-    queryPlan = new CQueryPlan(sql, sqlTree, false, s.isIncludesRowNumberColumn(), predicates.getLogWhereSql());
+    queryPlan = new CQueryPlan(request, sql, sqlTree, false, s.isIncludesRowNumberColumn(), predicates.getLogWhereSql());
     request.putQueryPlan(queryPlan);
 
     return new CQueryRowCount(request, predicates, sql);
@@ -208,7 +211,7 @@ public class CQueryBuilder implements Constants {
       queryPlan = new CQueryPlanRawSql(request, res, sqlTree, predicates.getLogWhereSql());
 
     } else {
-      queryPlan = new CQueryPlan(request, res, sqlTree, rawSql, predicates.getLogWhereSql(), null);
+      queryPlan = new CQueryPlan(request, res, sqlTree, rawSql, predicates.getLogWhereSql());
     }
 
     // cache the query plan because we can reuse it and also
@@ -254,21 +257,21 @@ public class CQueryBuilder implements Constants {
 
         ElPropertyValue el = descriptor.getElGetValue(propertyName);
         if (el == null) {
-          String msg = "Property [" + propertyName + "] not found on " + descriptor.getFullName();
-          throw new PersistenceException(msg);
-        }
-        BeanProperty beanProperty = el.getBeanProperty();
-        if (beanProperty.isId()) {
-          // For @Id properties we chop off the last part of the path
-          propertyName = SplitName.parent(propertyName);
-        } else if (beanProperty instanceof BeanPropertyAssocOne<?>) {
-          String msg = "Column [" + column.getDbColumn() + "] mapped to complex Property[" + propertyName + "]";
-          msg += ". It should be mapped to a simple property (proably the Id property). ";
-          throw new PersistenceException(msg);
-        }
-        if (propertyName != null) {
-          String[] pathProp = SplitName.split(propertyName);
-          pathProps.addToPath(pathProp[0], pathProp[1]);
+            throw new PersistenceException("Property [" + propertyName + "] not found on " + descriptor.getFullName());
+        } else {
+          BeanProperty beanProperty = el.getBeanProperty();
+          if (beanProperty.isId() || beanProperty.isDiscriminator()) {
+            // For @Id properties we chop off the last part of the path
+            propertyName = SplitName.parent(propertyName);
+          } else if (beanProperty instanceof BeanPropertyAssocOne<?>) {
+            String msg = "Column [" + column.getDbColumn() + "] mapped to complex Property[" + propertyName + "]";
+            msg += ". It should be mapped to a simple property (proably the Id property). ";
+            throw new PersistenceException(msg);
+          }
+          if (propertyName != null) {
+            String[] pathProp = SplitName.split(propertyName);
+            pathProps.addToPath(pathProp[0], pathProp[1]);
+          }
         }
       }
     }
@@ -302,6 +305,8 @@ public class CQueryBuilder implements Constants {
 
     StringBuilder sb = new StringBuilder(500);
 
+    String dbOrderBy = predicates.getDbOrderBy();
+    
     if (selectClause != null) {
       sb.append(selectClause);
 
@@ -317,6 +322,10 @@ public class CQueryBuilder implements Constants {
       }
 
       sb.append(select.getSelectSql());
+      if (query.isDistinct() && dbOrderBy != null) {
+        // add the orderby columns to the select clause (due to distinct)
+        sb.append(", ").append(convertDbOrderByForSelect(dbOrderBy));
+      }
     }
 
     sb.append(" from ");
@@ -372,7 +381,7 @@ public class CQueryBuilder implements Constants {
       sb.append(dbFilterMany);
     }
 
-    String dbOrderBy = predicates.getDbOrderBy();
+    
     if (dbOrderBy != null) {
       sb.append(" order by ").append(dbOrderBy);
     }
@@ -383,12 +392,20 @@ public class CQueryBuilder implements Constants {
       return sqlLimiter.limit(r);
 
     } else {
-
       return new SqlLimitResponse(dbPlatform.completeSql(sb.toString(), query), false);
     }
 
   }
 
+  /**
+   * Convert the dbOrderBy clause to be safe for adding to select. This is done when 'distinct' is
+   * used.
+   */
+  private String convertDbOrderByForSelect(String dbOrderBy) {
+    // just remove the ASC and DESC keywords
+    return dbOrderBy.replaceAll("(?i)\\b asc\\b|\\b desc\\b", "");
+  }
+  
   private boolean isEmpty(String s) {
     return s == null || s.length() == 0;
   }

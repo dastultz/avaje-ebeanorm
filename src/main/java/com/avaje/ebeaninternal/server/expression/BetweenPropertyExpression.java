@@ -1,6 +1,7 @@
 package com.avaje.ebeaninternal.server.expression;
 
 import com.avaje.ebean.event.BeanQueryRequest;
+import com.avaje.ebeaninternal.api.HashQueryPlanBuilder;
 import com.avaje.ebeaninternal.api.ManyWhereJoins;
 import com.avaje.ebeaninternal.api.SpiExpression;
 import com.avaje.ebeaninternal.api.SpiExpressionRequest;
@@ -9,8 +10,6 @@ import com.avaje.ebeaninternal.server.el.ElPropertyDeploy;
 
 /**
  * Between expression where a value is between two properties.
- * 
- * @author rbygrave
  */
 class BetweenPropertyExpression implements SpiExpression {
 
@@ -18,29 +17,18 @@ class BetweenPropertyExpression implements SpiExpression {
 
   private static final String BETWEEN = " between ";
 
-  private final FilterExprPath pathPrefix;
   private final String lowProperty;
   private final String highProperty;
   private final Object value;
 
-  BetweenPropertyExpression(FilterExprPath pathPrefix, String lowProperty, String highProperty, Object value) {
-    this.pathPrefix = pathPrefix;
+  BetweenPropertyExpression(String lowProperty, String highProperty, Object value) {
     this.lowProperty = lowProperty;
     this.highProperty = highProperty;
     this.value = value;
   }
 
   protected String name(String propName) {
-    if (pathPrefix == null) {
-      return propName;
-    } else {
-      String path = pathPrefix.getPath();
-      if (path == null || path.length() == 0) {
-        return propName;
-      } else {
-        return path + "." + propName;
-      }
-    }
+    return propName;
   }
 
   public void containsMany(BeanDescriptor<?> desc, ManyWhereJoins manyWhereJoin) {
@@ -65,15 +53,13 @@ class BetweenPropertyExpression implements SpiExpression {
     request.append(" ? ").append(BETWEEN).append(name(lowProperty)).append(" and ").append(name(highProperty));
   }
 
-  public int queryAutoFetchHash() {
-    int hc = BetweenPropertyExpression.class.getName().hashCode();
-    hc = hc * 31 + lowProperty.hashCode();
-    hc = hc * 31 + highProperty.hashCode();
-    return hc;
+  public void queryAutoFetchHash(HashQueryPlanBuilder builder) {
+    builder.add(BetweenPropertyExpression.class).add(lowProperty).add(highProperty);
+    builder.bind(1);
   }
 
-  public int queryPlanHash(BeanQueryRequest<?> request) {
-    return queryAutoFetchHash();
+  public void queryPlanHash(BeanQueryRequest<?> request, HashQueryPlanBuilder builder) {
+    queryAutoFetchHash(builder);
   }
 
   public int queryBindHash() {

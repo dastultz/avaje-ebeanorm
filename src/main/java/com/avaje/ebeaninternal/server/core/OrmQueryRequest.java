@@ -14,6 +14,8 @@ import com.avaje.ebean.bean.PersistenceContext;
 import com.avaje.ebean.event.BeanFinder;
 import com.avaje.ebean.event.BeanQueryRequest;
 import com.avaje.ebeaninternal.api.BeanIdList;
+import com.avaje.ebeaninternal.api.HashQuery;
+import com.avaje.ebeaninternal.api.HashQueryPlan;
 import com.avaje.ebeaninternal.api.LoadContext;
 import com.avaje.ebeaninternal.api.SpiEbeanServer;
 import com.avaje.ebeaninternal.api.SpiQuery;
@@ -49,17 +51,10 @@ public final class OrmQueryRequest<T> extends BeanRequest implements BeanQueryRe
 
   private PersistenceContext persistenceContext;
 
-  private Integer cacheKey;
+  private HashQuery cacheKey;
 
-  private int queryPlanHash;
-
-  /**
-   * Flag set if background fetching taking place. In this case the transaction
-   * is rolled back by the background fetching thread. Background fetching
-   * always takes place in its own transaction.
-   */
-  private boolean backgroundFetching;
-
+  private HashQueryPlan queryPlanHash;
+  
   /**
    * Create the InternalQueryRequest.
    */
@@ -76,10 +71,6 @@ public final class OrmQueryRequest<T> extends BeanRequest implements BeanQueryRe
 
     this.graphContext = new DLoadContext(ebeanServer, beanDescriptor, readOnly, query);
     graphContext.registerSecondaryQueries(query);
-  }
-
-  public void setTotalHits(int totalHits) {
-    query.setTotalHits(totalHits);
   }
 
   public void executeSecondaryQueries(int defaultQueryBatch) {
@@ -165,12 +156,7 @@ public final class OrmQueryRequest<T> extends BeanRequest implements BeanQueryRe
   @Override
   public void initTransIfRequired() {
     // first check if the query requires its own transaction
-    if (query.createOwnTransaction()) {
-      // using background fetch or query listener etc
-      transaction = ebeanServer.createQueryTransaction();
-      createdTransaction = true;
-
-    } else if (transaction == null) {
+    if (transaction == null) {
       // maybe a current one
       transaction = ebeanServer.getCurrentServerTransaction();
       if (transaction == null) {
@@ -204,17 +190,10 @@ public final class OrmQueryRequest<T> extends BeanRequest implements BeanQueryRe
    * </p>
    */
   public void endTransIfRequired() {
-    if (createdTransaction && !backgroundFetching) {
+    if (createdTransaction) {
       // we can rollback as readOnly transaction
       transaction.rollback();
     }
-  }
-
-  /**
-   * This query is using background fetching.
-   */
-  public void setBackgroundFetching() {
-    backgroundFetching = true;
   }
 
   /**
@@ -279,12 +258,11 @@ public final class OrmQueryRequest<T> extends BeanRequest implements BeanQueryRe
   public Map<?, ?> findMap() {
     String mapKey = query.getMapKey();
     if (mapKey == null) {
-      BeanProperty[] ids = beanDescriptor.propertiesId();
-      if (ids.length == 1) {
-        query.setMapKey(ids[0].getName());
+      BeanProperty idProp = beanDescriptor.getIdProperty();
+      if (idProp != null) {
+        query.setMapKey(idProp.getName());
       } else {
-        String msg = "No mapKey specified for query";
-        throw new PersistenceException(msg);
+        throw new PersistenceException("No mapKey specified for query");
       }
     }
     return (Map<?, ?>) queryEngine.findMany(this);
@@ -332,7 +310,7 @@ public final class OrmQueryRequest<T> extends BeanRequest implements BeanQueryRe
    * with just the bind variables changing.
    * </p>
    */
-  public int getQueryPlanHash() {
+  public HashQueryPlan getQueryPlanHash() {
     return queryPlanHash;
   }
 
@@ -356,17 +334,9 @@ public final class OrmQueryRequest<T> extends BeanRequest implements BeanQueryRe
       return null;
     }
 
-    if (query.getType() == null) {
-      // the query plan and bind values must be the same
-      cacheKey = Integer.valueOf(query.queryHash());
+    cacheKey = query.queryHash();
 
-    } else {
-      // additionally the return type (List/Set/Map) must be the same
-      cacheKey = Integer.valueOf(31 * query.queryHash() + query.getType().hashCode());
-    }
-
-    // TODO: Sort out returning BeanCollection from L2 cache
-    return null;
+    return beanDescriptor.queryCacheGet(cacheKey);
   }
 
   public void putToQueryCache(BeanCollection<T> queryResult) {
@@ -387,6 +357,17 @@ public final class OrmQueryRequest<T> extends BeanRequest implements BeanQueryRe
     if (transaction.isLogSql()) {
       transaction.logSql(sql);
     }
+  }
+
+  public void flushPersistenceContextOnIterate() {
+    beanDescriptor.flushPersistenceContextOnIterate(persistenceContext);
+  }
+
+  /**
+   * Return true if the request wants to log the secondary queries (test purpose).
+   */
+  public boolean isLogSecondaryQuery() {
+    return query.isLogSecondaryQuery();
   }
 
 }

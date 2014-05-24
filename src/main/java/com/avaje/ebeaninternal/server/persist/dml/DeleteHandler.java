@@ -52,20 +52,13 @@ public class DeleteHandler extends DmlHandler {
 	public void execute() throws SQLException, OptimisticLockException {
 		int rowCount = dataBind.executeUpdate();
 		checkRowCount(rowCount);
+		
+		// Deletes the bean from the PersistenceContext
+		persistRequest.postDelete();
 	}
-	
-    @Override
-    public boolean isIncluded(BeanProperty prop) {        
-        return prop.isDbUpdatable() && super.isIncluded(prop);
-    }
-    
-    @Override
-    public boolean isIncludedWhere(BeanProperty prop) {
-        return prop.isDbUpdatable() && (loadedProps == null || loadedProps.contains(prop.getName()));    
-    }
 
-    public void registerDerivedRelationship(DerivedRelationshipData assocBean) {
-	    throw new RuntimeException("Never called on delete");
-    }
+  public void registerDerivedRelationship(DerivedRelationshipData assocBean) {
+    throw new RuntimeException("Never called on delete");
+  }
     
 }

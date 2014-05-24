@@ -1,11 +1,8 @@
 package com.avaje.ebeaninternal.server.deploy.parse;
 
-import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
-import javax.persistence.AttributeOverride;
-import javax.persistence.AttributeOverrides;
 import javax.persistence.Column;
 import javax.persistence.Embedded;
 import javax.persistence.EmbeddedId;
@@ -110,10 +107,13 @@ public class AnnotationAssocOnes extends AnnotationParser {
         BeanTable beanTable = prop.getBeanTable();
         JoinColumn joinColumn = get(prop, JoinColumn.class);
         if (joinColumn != null) {
-            prop.getTableJoin().addJoinColumn(false, joinColumn, beanTable);
-            if (!joinColumn.updatable()){
-                prop.setDbUpdateable(false);
-            }
+          prop.getTableJoin().addJoinColumn(false, joinColumn, beanTable);
+          if (!joinColumn.updatable()) {
+            prop.setDbUpdateable(false);
+          }
+          if (!joinColumn.nullable()) {
+            prop.setNullable(false);
+          }
         }
 
         JoinColumns joinColumns = get(prop, JoinColumns.class);
@@ -210,20 +210,7 @@ public class AnnotationAssocOnes extends AnnotationParser {
             prop.getDeployEmbedded().putAll(propMap);
         }
 
-        AttributeOverrides attrOverrides = get(prop, AttributeOverrides.class);
-        if (attrOverrides != null) {
-            HashMap<String, String> propMap = new HashMap<String, String>();
-            AttributeOverride[] aoArray = attrOverrides.value();
-            for (int i = 0; i < aoArray.length; i++) {
-                String propName = aoArray[i].name();
-                String columnName = aoArray[i].column().name();
-
-                propMap.put(propName, columnName);
-            }
-
-            prop.getDeployEmbedded().putAll(propMap);
-        }
-
+        readEmbeddedAttributeOverrides(prop);
     }
 
 }

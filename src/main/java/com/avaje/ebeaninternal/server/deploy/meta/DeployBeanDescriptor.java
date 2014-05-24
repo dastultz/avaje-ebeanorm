@@ -13,7 +13,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.avaje.ebean.Query.UseIndex;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.avaje.ebean.annotation.ConcurrencyMode;
 import com.avaje.ebean.config.TableName;
 import com.avaje.ebean.config.dbplatform.IdGenerator;
@@ -22,7 +24,6 @@ import com.avaje.ebean.event.BeanFinder;
 import com.avaje.ebean.event.BeanPersistController;
 import com.avaje.ebean.event.BeanPersistListener;
 import com.avaje.ebean.event.BeanQueryAdapter;
-import com.avaje.ebean.meta.MetaAutoFetchStatistic;
 import com.avaje.ebeaninternal.server.core.CacheOptions;
 import com.avaje.ebeaninternal.server.deploy.BeanDescriptor.EntityType;
 import com.avaje.ebeaninternal.server.deploy.ChainedBeanPersistController;
@@ -34,8 +35,6 @@ import com.avaje.ebeaninternal.server.deploy.DeployNamedQuery;
 import com.avaje.ebeaninternal.server.deploy.DeployNamedUpdate;
 import com.avaje.ebeaninternal.server.deploy.InheritInfo;
 import com.avaje.ebeaninternal.server.reflect.BeanReflect;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Describes Beans including their deployment information.
@@ -58,17 +57,10 @@ public class DeployBeanDescriptor<T> {
 
   private static final Logger logger = LoggerFactory.getLogger(DeployBeanDescriptor.class);
 
-  private static final String META_BEAN_PREFIX = MetaAutoFetchStatistic.class.getName().substring(0, 20);
-
   /**
    * Map of BeanProperty Linked so as to preserve order.
    */
   private LinkedHashMap<String, DeployBeanProperty> propMap = new LinkedHashMap<String, DeployBeanProperty>();
-
-  /**
-   * The type of bean this describes.
-   */
-  private final Class<T> beanType;
 
   private EntityType entityType;
 
@@ -107,7 +99,7 @@ public class DeployBeanDescriptor<T> {
   /**
    * The concurrency mode for beans of this type.
    */
-  private ConcurrencyMode concurrencyMode = ConcurrencyMode.ALL;
+  private ConcurrencyMode concurrencyMode;
 
   private boolean updateChangesOnly;
 
@@ -134,15 +126,16 @@ public class DeployBeanDescriptor<T> {
    * faster than reflection at this stage.
    */
   private BeanReflect beanReflect;
+  private String[] properties;
 
   /**
    * The EntityBean type used to create new EntityBeans.
    */
-  private Class<?> factoryType;
+  private Class<T> beanType;
 
-  private List<BeanPersistController> persistControllers = new ArrayList<BeanPersistController>();
-  private List<BeanPersistListener<T>> persistListeners = new ArrayList<BeanPersistListener<T>>();
-  private List<BeanQueryAdapter> queryAdapters = new ArrayList<BeanQueryAdapter>();
+  private List<BeanPersistController> persistControllers = new ArrayList<BeanPersistController>(2);
+  private List<BeanPersistListener<T>> persistListeners = new ArrayList<BeanPersistListener<T>>(2);
+  private List<BeanQueryAdapter> queryAdapters = new ArrayList<BeanQueryAdapter>(2);
 
   private CacheOptions cacheOptions = new CacheOptions();
 
@@ -151,12 +144,10 @@ public class DeployBeanDescriptor<T> {
    */
   private BeanFinder<T> beanFinder;
 
-  private UseIndex useIndex;
-
   /**
    * The table joins for this bean. Server side only.
    */
-  private ArrayList<DeployTableJoin> tableJoinList = new ArrayList<DeployTableJoin>();
+  private ArrayList<DeployTableJoin> tableJoinList = new ArrayList<DeployTableJoin>(2);
 
   /**
    * Inheritance information. Server side only.
@@ -179,20 +170,6 @@ public class DeployBeanDescriptor<T> {
    */
   public boolean isAbstract() {
     return Modifier.isAbstract(beanType.getModifiers());
-  }
-
-  /**
-   * Return the default UseIndex strategy.
-   */
-  public UseIndex getUseIndex() {
-    return useIndex;
-  }
-
-  /**
-   * Set the default UseIndex strategy.
-   */
-  public void setUseIndex(UseIndex useIndex) {
-    this.useIndex = useIndex;
   }
 
   public boolean isScalaObject() {
@@ -247,9 +224,6 @@ public class DeployBeanDescriptor<T> {
    */
   public boolean checkReadAndWriteMethods() {
 
-    if (isMeta()) {
-      return true;
-    }
     boolean missingMethods = false;
 
     Iterator<DeployBeanProperty> it = propMap.values().iterator();
@@ -289,20 +263,9 @@ public class DeployBeanDescriptor<T> {
 
   public EntityType getEntityType() {
     if (entityType == null) {
-      entityType = isMeta() ? EntityType.META : EntityType.ORM;
+      entityType = EntityType.ORM;
     }
     return entityType;
-  }
-
-  /**
-   * Return true if this is a Meta entity bean.
-   * <p>
-   * The Meta entity beans are not based on real tables but get meta information
-   * from memory such as all the entity bean meta data.
-   * </p>
-   */
-  private boolean isMeta() {
-    return beanType.getName().startsWith(META_BEAN_PREFIX);
   }
 
   public void add(DRawSqlMeta rawSqlMeta) {
@@ -331,6 +294,14 @@ public class DeployBeanDescriptor<T> {
     return namedUpdates;
   }
 
+  public String[] getProperties() {
+    return properties;
+  }
+
+  public void setProperties(String[] props) {
+    this.properties = props;
+  }
+
   public BeanReflect getBeanReflect() {
     return beanReflect;
   }
@@ -340,23 +311,6 @@ public class DeployBeanDescriptor<T> {
    */
   public Class<T> getBeanType() {
     return beanType;
-  }
-
-  /**
-   * Return the class type this BeanDescriptor describes.
-   */
-  public Class<?> getFactoryType() {
-    return factoryType;
-  }
-
-  /**
-   * Set the class used to create new EntityBean instances.
-   * <p>
-   * Normally this would be a subclass dynamically generated for this bean.
-   * </p>
-   */
-  public void setFactoryType(Class<?> factoryType) {
-    this.factoryType = factoryType;
   }
 
   /**
@@ -383,7 +337,7 @@ public class DeployBeanDescriptor<T> {
   }
 
   /**
-   * Return the reference options.
+   * Return the cache options.
    */
   public CacheOptions getCacheOptions() {
     return cacheOptions;
@@ -786,26 +740,6 @@ public class DeployBeanDescriptor<T> {
     }
     String selectClause = sb.toString();
     return selectClause.substring(0, selectClause.length() - 1);
-  }
-
-  /**
-   * Return an Array of properties to include in default fetch (for LDAP).
-   */
-  public String[] getDefaultSelectDbArray(Set<String> defaultSelect) {
-
-    ArrayList<String> list = new ArrayList<String>();
-    for (DeployBeanProperty p : propMap.values()) {
-      if (defaultSelect != null) {
-        if (defaultSelect.contains(p.getName())) {
-          // properties in defaultSelect
-          list.add(p.getDbColumn());
-        }
-      } else if (!p.isTransient() && p.isDbRead()) {
-        // non transient db properties
-        list.add(p.getDbColumn());
-      }
-    }
-    return list.toArray(new String[list.size()]);
   }
 
   /**

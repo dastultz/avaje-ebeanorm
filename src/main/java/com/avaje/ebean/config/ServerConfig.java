@@ -18,6 +18,7 @@ import com.avaje.ebean.event.BeanQueryAdapter;
 import com.avaje.ebean.event.BulkTableEventListener;
 import com.avaje.ebean.event.ServerConfigStartup;
 import com.avaje.ebean.event.TransactionEventListener;
+import com.avaje.ebean.meta.MetaInfoManager;
 import com.avaje.ebean.util.ClassUtil;
 
 /**
@@ -65,7 +66,10 @@ import com.avaje.ebean.util.ClassUtil;
  * @author rbygrave
  */
 public class ServerConfig {
-  /** The Constant DEFAULT_QUERY_BATCH_SIZE. Default: 100 */
+  
+  /**
+   * The Constant DEFAULT_QUERY_BATCH_SIZE. Default: 100 
+   */
   private final static int DEFAULT_QUERY_BATCH_SIZE = 100;
 
   /**
@@ -111,13 +115,19 @@ public class ServerConfig {
    */
   private List<String> searchJars = new ArrayList<String>();
 
-  /** The autofetch config. */
+  /** 
+   * Config controlling the autofetch behaviour.
+   */
   private AutofetchConfig autofetchConfig = new AutofetchConfig();
 
-  /** The database platform name. */
+  /** 
+   * The database platform name. Used to imply a DatabasePlatform to use.  
+   */
   private String databasePlatformName;
 
-  /** The database platform. */
+  /** 
+   * The database platform. 
+   */
   private DatabasePlatform databasePlatform;
 
   /**
@@ -129,10 +139,14 @@ public class ServerConfig {
 
   private int persistBatchSize = 20;
 
-  /** The default batch size for lazy loading */
+  /** 
+   * The default batch size for lazy loading 
+   */
   private int lazyLoadBatchSize = 1;
 
-  /** The query batch size. */
+  /** 
+   * The query batch size. 
+   */
   private int queryBatchSize = -1;
 
   private boolean ddlGenerate;
@@ -151,26 +165,51 @@ public class ServerConfig {
    */
   private PstmtDelegate pstmtDelegate;
 
-  /** The data source. */
+  /** 
+   * The data source (if programmatically provided). 
+   */
   private DataSource dataSource;
 
-  /** The data source config. */
+  /** 
+   * The data source config. 
+   */
   private DataSourceConfig dataSourceConfig = new DataSourceConfig();
 
-  /** The data source jndi name. */
+  /** 
+   * The data source JNDI name if using a JNDI DataSource. 
+   */
   private String dataSourceJndiName;
 
-  /** The database boolean true. */
+  /** 
+   * The database boolean true value (typically either 1, T, or Y).
+   */
   private String databaseBooleanTrue;
 
-  /** The database boolean false. */
+  /** 
+   * The database boolean false value (typically either 0, F or N). 
+   */
   private String databaseBooleanFalse;
 
-  /** The naming convention. */
+  /** 
+   * The naming convention. 
+   */
   private NamingConvention namingConvention;
 
-  /** The update changes only. */
+  /** 
+   * Behaviour of update to include on the change properties. 
+   */
   private boolean updateChangesOnly = true;
+  
+  /**
+   * Default behaviour for updates when cascade save on a O2M or M2M to delete any missing children.
+   */
+  private boolean updatesDeleteMissingChildren = true;
+  
+  /**
+   * Setting to indicate if UUID should be stored as binary(16) or varchar(40).
+   */
+  private boolean uuidStoreAsBinary;
+  
 
   private List<BeanPersistController> persistControllers = new ArrayList<BeanPersistController>();
   private List<BeanPersistListener<?>> persistListeners = new ArrayList<BeanPersistListener<?>>();
@@ -191,6 +230,10 @@ public class ServerConfig {
 
   private ServerCacheManager serverCacheManager;
 
+  private boolean collectQueryStatsByNode;
+
+  private boolean collectQueryOrigins;
+  
   /**
    * Construct a Server Configuration for programmatically creating an
    * EbeanServer.
@@ -759,6 +802,21 @@ public class ServerConfig {
     this.dbEncrypt = dbEncrypt;
   }
 
+  
+  /**
+   * Return true if UUID should be stored as binary(16) (as opposed to varchar(40)).
+   */
+  public boolean isUuidStoreAsBinary() {
+    return uuidStoreAsBinary;
+  }
+
+  /**
+   * Set to true if UUID should be stored as binary(16) (as opposed to varchar(40)).
+   */
+  public void setUuidStoreAsBinary(boolean uuidStoreAsBinary) {
+    this.uuidStoreAsBinary = uuidStoreAsBinary;
+  }
+
   /**
    * Set to true to run the DDL generation on startup.
    */
@@ -925,6 +983,66 @@ public class ServerConfig {
    */
   public void setUpdateChangesOnly(boolean updateChangesOnly) {
     this.updateChangesOnly = updateChangesOnly;
+  }
+    
+  /**
+   * Return true if updates by default delete missing children when cascading save to a OneToMany or
+   * ManyToMany. When not set this defaults to true.
+   */
+  public boolean isUpdatesDeleteMissingChildren() {
+    return updatesDeleteMissingChildren;
+  }
+
+  /**
+   * Set if updates by default delete missing children when cascading save to a OneToMany or
+   * ManyToMany. When not set this defaults to true.
+   */
+  public void setUpdatesDeleteMissingChildren(boolean updatesDeleteMissingChildren) {
+    this.updatesDeleteMissingChildren = updatesDeleteMissingChildren;
+  }
+
+  /**
+   * Return true if the ebeanServer should collection query statistics by ObjectGraphNode.
+   */
+  public boolean isCollectQueryStatsByNode() {
+    return collectQueryStatsByNode;
+  }
+
+  /**
+   * Set to true to collection query execution statistics by ObjectGraphNode.
+   * <p>
+   * These statistics can be used to highlight code/query 'origin points' that result in lots of lazy loading.
+   * </p>
+   * <p>
+   * It is considered safe/fine to have this set to true for production.
+   * </p>
+   * <p>
+   * This information can be later retrieved via {@link MetaInfoManager}.
+   * </p>
+   * @see MetaInfoManager
+   */
+  public void setCollectQueryStatsByNode(boolean collectQueryStatsByNode) {
+    this.collectQueryStatsByNode = collectQueryStatsByNode;
+  }
+
+  /**
+   * Return true if query plans should also collect their 'origins'. This means for a given query plan you
+   * can identify the code/origin points where this query resulted from including lazy loading origins.
+   */
+  public boolean isCollectQueryOrigins() {
+    return collectQueryOrigins;
+  }
+
+  /**
+   * Set to true if query plans should collect their 'origin' points. This means for a given query plan you
+   * can identify the code/origin points where this query resulted from including lazy loading origins.
+   * <p>
+   * This information can be later retrieved via {@link MetaInfoManager}.
+   * </p>
+   * @see MetaInfoManager
+   */
+  public void setCollectQueryOrigins(boolean collectQueryOrigins) {
+    this.collectQueryOrigins = collectQueryOrigins;
   }
 
   /**
@@ -1183,7 +1301,13 @@ public class ServerConfig {
       packages = getSearchJarsPackages(packagesProp);
     }
 
+    collectQueryStatsByNode = p.getBoolean("collectQueryStatsByNode", true);
+    collectQueryOrigins = p.getBoolean("collectQueryOrigins", true);
+
     updateChangesOnly = p.getBoolean("updateChangesOnly", true);
+    
+    boolean defaultDeleteMissingChildren = p.getBoolean("defaultDeleteMissingChildren", true);
+    updatesDeleteMissingChildren = p.getBoolean("updatesDeleteMissingChildren", defaultDeleteMissingChildren);
 
     boolean batchMode = p.getBoolean("batch.mode", false);
     persistBatching = p.getBoolean("persistBatching", batchMode);
@@ -1196,6 +1320,7 @@ public class ServerConfig {
     databaseBooleanTrue = p.get("databaseBooleanTrue", null);
     databaseBooleanFalse = p.get("databaseBooleanFalse", null);
     databasePlatformName = p.get("databasePlatformName", null);
+    uuidStoreAsBinary = p.getBoolean("uuidStoreAsBinary", false);
 
     lazyLoadBatchSize = p.getInt("lazyLoadBatchSize", 1);
     queryBatchSize = p.getInt("queryBatchSize", DEFAULT_QUERY_BATCH_SIZE);

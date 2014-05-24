@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
+import com.avaje.ebean.bean.EntityBean;
 import com.avaje.ebean.text.TextException;
 import com.avaje.ebean.text.json.JsonContext;
 import com.avaje.ebean.text.json.JsonElement;
@@ -216,47 +217,45 @@ public class DJsonContext implements JsonContext {
             
         } else {
             BeanDescriptor<?> d = getDecriptor(o.getClass());
-            WriteJsonContext ctx = new WriteJsonContext(buffer, pretty, dfltValueAdapter, options, requestCallback);
-            d.jsonWrite(ctx, o);
+            WriteJsonContext ctx = new WriteJsonContext(buffer, pretty, dfltValueAdapter, options, requestCallback, server);
+            d.jsonWrite(ctx, (EntityBean)o);
             ctx.end();
         }
     }
    
 
-    private <T> void toJsonFromCollection(Collection<T> c, WriteJsonBuffer buffer, boolean pretty, 
-            JsonWriteOptions options, String requestCallback){
+    private <T> void toJsonFromCollection(Collection<T> c, WriteJsonBuffer buffer, boolean pretty, JsonWriteOptions options, String requestCallback){
         
         Iterator<T> it = c.iterator();
         if (!it.hasNext()){
         	buffer.append("[]");
-            return;
+          return;
         }
         
-        WriteJsonContext ctx = new WriteJsonContext(buffer, pretty, dfltValueAdapter, options, requestCallback);
+        WriteJsonContext ctx = new WriteJsonContext(buffer, pretty, dfltValueAdapter, options, requestCallback, server);
 
         Object o = it.next();
         BeanDescriptor<?> d = getDecriptor(o.getClass());
 
         ctx.appendArrayBegin();
-        d.jsonWrite(ctx, o);
+        d.jsonWrite(ctx, (EntityBean)o);
         while (it.hasNext()) {
             ctx.appendComma();
             T t = it.next();        
-            d.jsonWrite(ctx, t);
+            d.jsonWrite(ctx, (EntityBean)t);
         }
         ctx.appendArrayEnd();
         ctx.end();
     }
 
-    private void toJsonFromMap(Map<Object,Object> map, WriteJsonBuffer buffer, boolean pretty, 
-            JsonWriteOptions options, String requestCallback){
+    private void toJsonFromMap(Map<Object,Object> map, WriteJsonBuffer buffer, boolean pretty, JsonWriteOptions options, String requestCallback){
         
         if (map.isEmpty()){
         	buffer.append("{}");
             return;
         }
         
-        WriteJsonContext ctx = new WriteJsonContext(buffer, pretty, dfltValueAdapter, options, requestCallback);
+        WriteJsonContext ctx = new WriteJsonContext(buffer, pretty, dfltValueAdapter, options, requestCallback, server);
 
         Set<Entry<Object,Object>> entrySet = map.entrySet();
         Iterator<Entry<Object, Object>> it = entrySet.iterator();

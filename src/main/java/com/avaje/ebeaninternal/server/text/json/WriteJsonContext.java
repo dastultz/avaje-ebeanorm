@@ -1,5 +1,7 @@
 package com.avaje.ebeaninternal.server.text.json;
 
+import java.util.Collection;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
 
@@ -10,6 +12,8 @@ import com.avaje.ebean.text.json.JsonValueAdapter;
 import com.avaje.ebean.text.json.JsonWriteBeanVisitor;
 import com.avaje.ebean.text.json.JsonWriteOptions;
 import com.avaje.ebean.text.json.JsonWriter;
+import com.avaje.ebeaninternal.api.SpiEbeanServer;
+import com.avaje.ebeaninternal.server.deploy.BeanDescriptor;
 import com.avaje.ebeaninternal.server.type.EscapeJson;
 import com.avaje.ebeaninternal.server.type.ScalarType;
 import com.avaje.ebeaninternal.server.util.ArrayStack;
@@ -17,6 +21,8 @@ import com.avaje.ebeaninternal.server.util.ArrayStack;
 
 public class WriteJsonContext implements JsonWriter {
 
+    private final SpiEbeanServer server;
+  
     private final WriteJsonBuffer buffer;
 
     private final boolean pretty;
@@ -40,8 +46,9 @@ public class WriteJsonContext implements JsonWriter {
     boolean assocOne;
 
     public WriteJsonContext(WriteJsonBuffer buffer, boolean pretty, JsonValueAdapter dfltValueAdapter, 
-            JsonWriteOptions options, String requestCallback){
+            JsonWriteOptions options, String requestCallback, SpiEbeanServer server){
         
+      this.server = server;
         this.buffer = buffer;
         this.pretty = pretty;
         this.pathStack = new PathStack();
@@ -61,6 +68,37 @@ public class WriteJsonContext implements JsonWriter {
             buffer.append(requestCallback).append("(");
         }
     }
+ 
+    public void toJson(String name, Collection<?> c) {
+        
+      beginAssocMany(name);
+      
+      Iterator<?> it = c.iterator();
+      if (!it.hasNext()){
+        endAssocMany();
+        return;
+      }
+          
+      EntityBean o = (EntityBean)it.next();
+      BeanDescriptor<?> d = getDecriptor(o.getClass());
+  
+      d.jsonWrite(this, o);
+      while (it.hasNext()) {
+          appendComma();
+          EntityBean t = (EntityBean)it.next();        
+          d.jsonWrite(this, t);
+      }
+      endAssocMany();
+    }
+    
+    private <T> BeanDescriptor<T> getDecriptor(Class<T> cls) {
+      BeanDescriptor<T> d = server.getBeanDescriptor(cls);
+      if (d == null){
+          String msg = "No BeanDescriptor found for "+cls;
+          throw new RuntimeException(msg);
+      }
+      return d;
+  }
     
     public void appendRawValue(String key, String rawJsonValue) {
     	appendKeyWithComma(key, true);
@@ -306,7 +344,7 @@ public class WriteJsonContext implements JsonWriter {
     }
     
     public WriteBeanState pushBeanState(Object bean) {
-        WriteBeanState newState = new WriteBeanState(bean);
+        WriteBeanState newState = new WriteBeanState();//bean);
         WriteBeanState prevState = beanState;
         beanState = newState;
         return prevState;
@@ -316,52 +354,14 @@ public class WriteJsonContext implements JsonWriter {
         this.beanState = previousState;
     }
     
-    public boolean isReferenceBean() {
-        return beanState.isReferenceBean();
-    }
-    
-    public boolean includedProp(String name) {
-        return beanState.includedProp(name);
-    }
-    
-    public Set<String> getLoadedProps() {
-        return beanState.getLoadedProps();
-    }
-    
     
     public static class WriteBeanState {
         
-        private final EntityBeanIntercept ebi;
-        private final Set<String> loadedProps;
-        private final boolean referenceBean;
         private boolean firstKeyOut;
         
-        public WriteBeanState(Object bean) {
-            if (bean instanceof EntityBean){
-                this.ebi = ((EntityBean)bean)._ebean_getIntercept();
-                this.loadedProps = ebi.getLoadedProps();
-                this.referenceBean = ebi.isReference();
-            } else {
-                this.ebi = null;
-                this.loadedProps = null;
-                this.referenceBean = false;
-            }
-        }
-        
-        public Set<String> getLoadedProps() {
-            return loadedProps;
-        }
-        
-        public boolean includedProp(String name) {
-            if (loadedProps == null || loadedProps.contains(name)){
-                return true;
-            } else {
-                return false;
-            }
-        }
-        public boolean isReferenceBean() {
-            return referenceBean;
-        }
+        public WriteBeanState() {
+          
+        }       
         
         public boolean isFirstKey() {
             if (!firstKeyOut){

@@ -2,10 +2,14 @@ package com.avaje.ebeaninternal.server.deploy;
 
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 
 import javax.persistence.PersistenceException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import com.avaje.ebean.EbeanServer;
 import com.avaje.ebean.Expression;
@@ -16,6 +20,7 @@ import com.avaje.ebean.bean.BeanCollection;
 import com.avaje.ebean.bean.BeanCollection.ModifyListenMode;
 import com.avaje.ebean.bean.BeanCollectionAdd;
 import com.avaje.ebean.bean.BeanCollectionLoader;
+import com.avaje.ebean.bean.EntityBean;
 import com.avaje.ebeaninternal.api.SpiQuery;
 import com.avaje.ebeaninternal.server.core.DefaultSqlUpdate;
 import com.avaje.ebeaninternal.server.deploy.id.ImportedId;
@@ -33,59 +38,62 @@ import com.avaje.ebeaninternal.server.text.json.WriteJsonContext;
  */
 public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 
-	/**
-	 * Join for manyToMany intersection table.
-	 */
-	final TableJoin intersectionJoin;
+  private static final Logger logger = LoggerFactory.getLogger(BeanPropertyAssocMany.class);
+  
+  /**
+   * Join for manyToMany intersection table.
+   */
+  private final TableJoin intersectionJoin;
 
-	/**
-	 * For ManyToMany this is the Inverse join used to build reference queries.
-	 */
-	final TableJoin inverseJoin;
+  /**
+   * For ManyToMany this is the Inverse join used to build reference queries.
+   */
+  private final TableJoin inverseJoin;
 
-	/**
-	 * Flag to indicate that this is a unidirectional relationship.
-	 */
-	final boolean unidirectional;
+  /**
+   * Flag to indicate that this is a unidirectional relationship.
+   */
+  private final boolean unidirectional;
 
-	/**
-	 * Flag to indicate manyToMany relationship.
-	 */
-	final boolean manyToMany;
+  /**
+   * Flag to indicate manyToMany relationship.
+   */
+  private final boolean manyToMany;
 
-	final String fetchOrderBy;
+  private final String fetchOrderBy;
 
-	final String mapKey;
+  private final String mapKey;
 
-	/**
-	 * The type of the many, set, list or map.
-	 */
-	final ManyType manyType;
+  /**
+   * The type of the many, set, list or map.
+   */
+  private final ManyType manyType;
 
-	final String serverName;
+  private final ModifyListenMode modifyListenMode;
 
-	final ModifyListenMode modifyListenMode;
+  private BeanProperty mapKeyProperty;
+  
+  /**
+   * Derived list of exported property and matching foreignKey
+   */
+  private ExportedProperty[] exportedProperties;
+  
+  private String exportedPropertyBindProto = "?";
 
-    BeanProperty mapKeyProperty;
-    /**
-     * Derived list of exported property and matching foreignKey
-     */
-    ExportedProperty[] exportedProperties;
+  /**
+   * Property on the 'child' bean that links back to the 'master'.
+   */
+  private BeanPropertyAssocOne<?> childMasterProperty;
 
-    /**
-     * Property on the 'child' bean that links back to the 'master'.
-     */
-    BeanPropertyAssocOne<?> childMasterProperty;
+  private boolean embeddedExportedProperties;
 
-    boolean embeddedExportedProperties;
+  private BeanCollectionHelp<T> help;
 
-    BeanCollectionHelp<T> help;
+  private ImportedId importedId;
 
-	ImportedId importedId;
-	
-	String deleteByParentIdSql;
-    String deleteByParentIdInSql;
-
+  private String deleteByParentIdSql;
+  
+  private String deleteByParentIdInSql;
 
 	/**
 	 * Create this property.
@@ -94,12 +102,9 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 		super(owner, descriptor, deploy);
 		this.unidirectional = deploy.isUnidirectional();
 		this.manyToMany = deploy.isManyToMany();
-		this.serverName = descriptor.getServerName();
 		this.manyType = deploy.getManyType();
-
 		this.mapKey = deploy.getMapKey();
 		this.fetchOrderBy = deploy.getFetchOrderBy();
-
 		this.intersectionJoin = deploy.createIntersectionTableJoin();
 		this.inverseJoin = deploy.createInverseTableJoin();
 		this.modifyListenMode = deploy.getModifyListenMode();
@@ -131,6 +136,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 			exportedProperties = createExported();
 			if (exportedProperties.length > 0){
 				embeddedExportedProperties = exportedProperties[0].isEmbedded();
+				exportedPropertyBindProto = deriveExportedPropertyBindProto();
 			}
 			
 			String delStmt;
@@ -139,28 +145,52 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 			} else {
 			    delStmt = "delete from "+targetDescriptor.getBaseTable()+" where ";
 			}
-			deleteByParentIdSql = delStmt + deriveWhereParentIdSql(false);
-			deleteByParentIdInSql = delStmt + deriveWhereParentIdSql(true);
+			deleteByParentIdSql = delStmt + deriveWhereParentIdSql(false,"");
+			deleteByParentIdInSql = delStmt + deriveWhereParentIdSql(true,"");
 		}
 	}
+
+	/**
+	 * Add the bean to the appropriate collection on the parent bean.
+	 */
+    public void addBeanToCollectionWithCreate(EntityBean parentBean, EntityBean detailBean) {
+        BeanCollection<?> bc = (BeanCollection<?>)super.getValue(parentBean);
+        if (bc == null) {
+          bc = (BeanCollection<?>)help.createEmpty(false);
+          setValue(parentBean, bc);
+        }
+        help.add(bc, detailBean);
+    }
+
+    public boolean isEmptyBeanCollection(EntityBean bean) {
+      Object val = getValue(bean);
+      if (val == null) {
+        return true;
+      }
+      if (val instanceof BeanCollection<?>) {
+        // if empty and not been cleared or elements removed
+        return ((BeanCollection<?>)val).isEmptyAndUntouched();
+      }
+      return false;
+    }
     
     @Override
-    public Object getValue(Object bean) {
+    public Object getValue(EntityBean bean) {
         return super.getValue(bean);
     }
 
     @Override
-    public Object getValueIntercept(Object bean) {
+    public Object getValueIntercept(EntityBean bean) {
         return super.getValueIntercept(bean);
     }
 
     @Override
-    public void setValue(Object bean, Object value) {
+    public void setValue(EntityBean bean, Object value) {
         super.setValue(bean, value);
     }
 
     @Override
-    public void setValueIntercept(Object bean, Object value) {
+    public void setValueIntercept(EntityBean bean, Object value) {
         super.setValueIntercept(bean, value);
     }
 
@@ -195,7 +225,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
     
     private List<Object> findIdsByParentId(Object parentId, Transaction t, ArrayList<Object> excludeDetailIds) {
         
-        String rawWhere = deriveWhereParentIdSql(false);
+        String rawWhere = deriveWhereParentIdSql(false,"");
         
         EbeanServer server = getBeanDescriptor().getEbeanServer();
         Query<?> q = server.find(getPropertyType())
@@ -211,45 +241,96 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
         return server.findIds(q, t);
     }
     
-    private List<Object> findIdsByParentIdList(List<Object> parentIdist, Transaction t, ArrayList<Object> excludeDetailIds) {
+    /**
+     * Add a where clause to the query for a given list of parent Id's.
+     */
+    public void addWhereParentIdIn(SpiQuery<?> query, List<Object> parentIds) {
 
-        String rawWhere = deriveWhereParentIdSql(true);
-        String inClause = targetIdBinder.getIdInValueExpr(parentIdist.size());
-        
-        String expr = rawWhere+inClause;
-        
-        EbeanServer server = getBeanDescriptor().getEbeanServer();
-        Query<?> q = server.find(getPropertyType())
-            .where().raw(expr).query();
-       
-        int pos = 1;
-        for (int i = 0; i < parentIdist.size(); i++) {            
-            pos = bindWhereParendId(pos, q, parentIdist.get(i));
-        }
-        
-        if (excludeDetailIds != null && !excludeDetailIds.isEmpty()) {
-    		Expression idIn = q.getExpressionFactory().idIn(excludeDetailIds);
-        	q.where().not(idIn);
-        }
-        
-        return server.findIds(q, t);
+      String tableAlias = manyToMany ? "int_." : "t0.";
+      if (manyToMany) {
+        query.setIncludeTableJoin(inverseJoin);
+      }
+      String rawWhere = deriveWhereParentIdSql(true, tableAlias);
+      String inClause = descriptor.getIdBinder().getIdInValueExpr(parentIds.size());
+
+      String expr = rawWhere+inClause;
+
+      // Flatten the bind values if needed (embeddedId)
+      List<Object> bindValues = getBindParentIds(parentIds);
+      
+      query.where().raw(expr, bindValues.toArray());
     }
+    
+  private List<Object> findIdsByParentIdList(List<Object> parentIdist, Transaction t, ArrayList<Object> excludeDetailIds) {
+
+    String rawWhere = deriveWhereParentIdSql(true, "");
+    String inClause = buildInClauseBinding(parentIdist.size(), exportedPropertyBindProto);
+    
+    String expr = rawWhere + inClause;
+
+    EbeanServer server = getBeanDescriptor().getEbeanServer();
+    Query<?> q = server.find(getPropertyType()).where().raw(expr).query();
+
+    int pos = 1;
+    for (int i = 0; i < parentIdist.size(); i++) {
+      pos = bindWhereParendId(pos, q, parentIdist.get(i));
+    }
+
+    if (excludeDetailIds != null && !excludeDetailIds.isEmpty()) {
+      Expression idIn = q.getExpressionFactory().idIn(excludeDetailIds);
+      q.where().not(idIn);
+    }
+
+    return server.findIds(q, t);
+  }
 	
-	private SqlUpdate deleteByParentIdList(List<Object> parentIdist) {
+  private SqlUpdate deleteByParentIdList(List<Object> parentIdist) {
 
-        StringBuilder sb = new StringBuilder(100);
-        sb.append(deleteByParentIdInSql);
+    StringBuilder sb = new StringBuilder(100);
+    sb.append(deleteByParentIdInSql);
 
-        String inClause = targetIdBinder.getIdInValueExpr(parentIdist.size());
-        sb.append(inClause);
-        
-        DefaultSqlUpdate delete = new DefaultSqlUpdate(sb.toString());
-        for (int i = 0; i < parentIdist.size(); i++) {            
-            bindWhereParendId(delete, parentIdist.get(i));
-        }
-        
-        return delete;
+    String inClause = buildInClauseBinding(parentIdist.size(), exportedPropertyBindProto);
+    sb.append(inClause);
+
+    DefaultSqlUpdate delete = new DefaultSqlUpdate(sb.toString());
+    for (int i = 0; i < parentIdist.size(); i++) {
+      bindWhereParendId(delete, parentIdist.get(i));
     }
+
+    return delete;
+  }	
+	
+  private String deriveExportedPropertyBindProto() {
+    if (exportedProperties.length == 1) {
+      return "?";
+    }
+    StringBuilder sb = new StringBuilder();
+    sb.append("(");
+    for (int i = 0; i < exportedProperties.length; i++) {
+      if (i > 0) {
+        sb.append(",");
+      }
+      sb.append("?");
+    }
+    sb.append(")");
+    return sb.toString();
+  }
+
+  private String buildInClauseBinding(int size, String bindProto) {
+
+    StringBuilder sb = new StringBuilder(10 + (size * (bindProto.length() + 1)));
+    sb.append(" in");
+
+    sb.append(" (");
+    for (int i = 0; i < size; i++) {
+      if (i > 0) {
+        sb.append(",");
+      }
+      sb.append(bindProto);
+    }
+    sb.append(") ");
+    return sb.toString();
+  }	
 	
 	/**
 	 * Set the lazy load server to help create reference collections (that lazy
@@ -291,7 +372,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 	}
 	
 	@Override
-	public Object readSet(DbReadContext ctx, Object bean, Class<?> type) throws SQLException {
+	public Object readSet(DbReadContext ctx, EntityBean bean, Class<?> type) throws SQLException {
 		return null;
 	}
 
@@ -309,21 +390,21 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 		return true;
 	}
 
-	public void add(BeanCollection<?> collection, Object bean) {
+	public void add(BeanCollection<?> collection, EntityBean bean) {
 		help.add(collection, bean);
 	}
 
 	/**
 	 * Refresh the appropriate list set or map.
 	 */
-	public void refresh(EbeanServer server, Query<?> query, Transaction t, Object parentBean) {
+	public void refresh(EbeanServer server, Query<?> query, Transaction t, EntityBean parentBean) {
 		help.refresh(server, query, t, parentBean);
 	}
 
 	/**
 	 * Apply the refreshed BeanCollection to the property of the parentBean.
 	 */
-	public void refresh(BeanCollection<?> bc, Object parentBean) {
+	public void refresh(BeanCollection<?> bc, EntityBean parentBean) {
 		help.refresh(bc, parentBean);
 	}
 
@@ -331,7 +412,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
      * Return the Id values from the given bean.
      */
     @Override
-    public Object[] getAssocOneIdValues(Object bean) {
+    public Object[] getAssocOneIdValues(EntityBean bean) {
         return targetDescriptor.getIdBinder().getIdValues(bean);
     }
 
@@ -402,7 +483,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 	 * Set the join properties from the parent bean to the child bean.
 	 * This is only valid for OneToMany and NOT valid for ManyToMany.
 	 */
-	public void setJoinValuesToChild(Object parent, Object child, Object mapKeyValue) {
+	public void setJoinValuesToChild(EntityBean parent, EntityBean child, Object mapKeyValue) {
 
 		if (mapKeyProperty != null){
 			mapKeyProperty.setValue(child, mapKeyValue);
@@ -435,7 +516,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 		return mapKey;
 	}
 
-    public BeanCollection<?> createReferenceIfNull(Object parentBean) {
+    public BeanCollection<?> createReferenceIfNull(EntityBean parentBean) {
 
         Object v = getValue(parentBean);
         if (v instanceof BeanCollection<?>){
@@ -446,7 +527,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
         }
     }
     
-	public BeanCollection<?> createReference(Object parentBean) {
+	public BeanCollection<?> createReference(EntityBean parentBean) {
 
 		BeanCollection<?> ref = help.createReference(parentBean, name);
 		setValue(parentBean, ref);
@@ -461,8 +542,22 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 		return help.getBeanCollectionAdd(bc, mapKey);		
 	}
 	
-	public Object getParentId(Object parentBean) {
+	public Object getParentId(EntityBean parentBean) {
 		return descriptor.getId(parentBean);
+	}
+
+	public List<Object> getBindParentIds(List<Object> parentIds) {
+    if (exportedProperties.length == 1){
+      return parentIds;
+    }
+    List<Object> expandedList = new ArrayList<Object>(parentIds.size()*exportedProperties.length);
+    for (int i=0; i < parentIds.size(); i++) {
+      for (int y = 0; y < exportedProperties.length; y++) {
+        Object compId = parentIds.get(i);
+        expandedList.add(exportedProperties[y].getValue((EntityBean)compId));
+      }      
+    }
+    return expandedList;
 	}
 	
 	private void bindWhereParendId(DefaultSqlUpdate sqlUpd, Object parentId){
@@ -471,8 +566,9 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
             sqlUpd.addParameter(parentId);
             return;
         }
+        EntityBean parent = (EntityBean)parentId;
         for (int i = 0; i < exportedProperties.length; i++) {
-            Object embVal = exportedProperties[i].getValue(parentId);
+            Object embVal = exportedProperties[i].getValue(parent);
             sqlUpd.addParameter(embVal);
         }
 	}
@@ -484,15 +580,27 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
             
         } else {
             
+          EntityBean parent = (EntityBean)parentId;
             for (int i = 0; i < exportedProperties.length; i++) {
-                Object embVal = exportedProperties[i].getValue(parentId);
+                Object embVal = exportedProperties[i].getValue(parent);
                 q.setParameter(pos++, embVal);
             }
         }
         return pos;
     }
 	
-    private String deriveWhereParentIdSql(boolean inClause) {
+    public void addSelectExported(DbSqlContext ctx, String tableAlias) {
+      
+      String alias = manyToMany ? "int_" : tableAlias;
+      if (alias == null) {
+        alias = "t0";
+      }
+      for (int i = 0; i < exportedProperties.length; i++) {
+        ctx.appendColumn(alias, exportedProperties[i].getForeignDbColumn()); 
+      }
+    }
+    
+    private String deriveWhereParentIdSql(boolean inClause, String tableAlias) {
         
         StringBuilder sb = new StringBuilder();
         
@@ -505,7 +613,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
                 String s = inClause ? "," : " and ";
                 sb.append(s);
             }
-            sb.append(fkColumn);
+            sb.append(tableAlias).append(fkColumn);
             if (!inClause){
                 sb.append("=? ");
             }
@@ -516,7 +624,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
         return sb.toString();
     }
 	
-	public void setPredicates(SpiQuery<?> query, Object parentBean) {
+	public void setPredicates(SpiQuery<?> query, EntityBean parentBean) {
 
 		if (manyToMany){
 			// for ManyToMany lazy loading we need to include a
@@ -527,8 +635,8 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 
 		if (embeddedExportedProperties) {
 			// use the EmbeddedId object instead of the parentBean
-			BeanProperty[] uids = descriptor.propertiesId();
-			parentBean = uids[0].getValue(parentBean);
+			BeanProperty idProp = descriptor.getIdProperty();
+			parentBean = (EntityBean)idProp.getValue(parentBean);
 		}
 
 		for (int i = 0; i < exportedProperties.length; i++) {
@@ -560,13 +668,13 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 	 */
 	private ExportedProperty[] createExported() {
 
-		BeanProperty[] uids = descriptor.propertiesId();
+		BeanProperty idProp = descriptor.getIdProperty();
 
 		ArrayList<ExportedProperty> list = new ArrayList<ExportedProperty>();
 
-		if (uids.length == 1 && uids[0].isEmbedded()) {
+		if (idProp != null && idProp.isEmbedded()) {
 
-			BeanPropertyAssocOne<?> one = (BeanPropertyAssocOne<?>) uids[0];
+			BeanPropertyAssocOne<?> one = (BeanPropertyAssocOne<?>) idProp;
 			BeanDescriptor<?> targetDesc = one.getTargetDescriptor();
 			BeanProperty[] emIds = targetDesc.propertiesBaseScalar();
 			try {
@@ -576,12 +684,12 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 				}
 			} catch (PersistenceException e){
 				// not found as individual scalar properties
-				e.printStackTrace();
+				logger.error("Could not find a exported property?", e);
 			}
 
 		} else {
-			for (int i = 0; i < uids.length; i++) {
-				ExportedProperty expProp = findMatch(false, uids[i]);
+		  if (idProp != null) {
+				ExportedProperty expProp = findMatch(false, idProp);
 				list.add(expProp);
 			}
 		}
@@ -683,7 +791,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 		throw new PersistenceException(msg);
 	}
 
-    public IntersectionRow buildManyDeleteChildren(Object parentBean, ArrayList<Object> excludeDetailIds) {
+    public IntersectionRow buildManyDeleteChildren(EntityBean parentBean, ArrayList<Object> excludeDetailIds) {
 
         IntersectionRow row = new IntersectionRow(tableJoin.getTable());
         if (excludeDetailIds != null && !excludeDetailIds.isEmpty()) {
@@ -693,14 +801,14 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
         return row;
     }
 
-    public IntersectionRow buildManyToManyDeleteChildren(Object parentBean) {
+    public IntersectionRow buildManyToManyDeleteChildren(EntityBean parentBean) {
 
         IntersectionRow row = new IntersectionRow(intersectionJoin.getTable());
         buildExport(row, parentBean);
         return row;
     }
    
-	public IntersectionRow buildManyToManyMapBean(Object parent, Object other) {
+	public IntersectionRow buildManyToManyMapBean(EntityBean parent, EntityBean other) {
 
 		IntersectionRow row = new IntersectionRow(intersectionJoin.getTable());
 
@@ -709,11 +817,11 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 		return row;
 	}
 
-	private void buildExport(IntersectionRow row, Object parentBean) {
+	private void buildExport(IntersectionRow row, EntityBean parentBean) {
 
 		if (embeddedExportedProperties) {
-	        BeanProperty[] uids = descriptor.propertiesId();
-			parentBean = uids[0].getValue(parentBean);
+	    BeanProperty idProp = descriptor.getIdProperty();
+			parentBean = (EntityBean)idProp.getValue(parentBean);
 		}
 		for (int i = 0; i < exportedProperties.length; i++) {
 			Object val = exportedProperties[i].getValue(parentBean);
@@ -727,7 +835,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 	 * Set the predicates for lazy loading of the association.
 	 * Handles predicates for both OneToMany and ManyToMany.
 	 */
-	private void buildImport(IntersectionRow row, Object otherBean) {
+	private void buildImport(IntersectionRow row, EntityBean otherBean) {
 
 		importedId.buildImport(row, otherBean);
 	}
@@ -735,12 +843,12 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
 	/**
 	 * Return true if the otherBean has an Id value.
 	 */
-    public boolean hasImportedId(Object otherBean) {
+    public boolean hasImportedId(EntityBean otherBean) {
         
         return null != targetDescriptor.getId(otherBean);
     }
 
-    public void jsonWrite(WriteJsonContext ctx, Object bean) {
+    public void jsonWrite(WriteJsonContext ctx, EntityBean bean) {
         if(!this.jsonSerialize){
             return;
         }
@@ -752,12 +860,16 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
         Object value = getValueIntercept(bean);
         if (value != null){
             ctx.pushParentBeanMany(bean);
-            help.jsonWrite(ctx, name, value, include != null);
+            if (help != null){
+              help.jsonWrite(ctx, name, value, include != null);              
+            } else {
+              ctx.toJson(name, (Collection<?>)value);
+            }
             ctx.popParentBeanMany();
         }
     }
     
-    public void jsonRead(ReadJsonContext ctx, Object bean){
+    public void jsonRead(ReadJsonContext ctx, EntityBean bean){
         if(!this.jsonDeserialize){
             return;
         }
@@ -774,7 +886,7 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
                 // probably empty array
                 break;
             } 
-            Object detailBean = detailBeanState.getBean();
+            EntityBean detailBean = (EntityBean)detailBeanState.getBean();
             add.addBean(detailBean);
             
             if (bean != null && childMasterProperty != null){
@@ -782,15 +894,12 @@ public class BeanPropertyAssocMany<T> extends BeanPropertyAssoc<T> {
                 childMasterProperty.setValue(detailBean, bean);
                 detailBeanState.setLoaded(childMasterProperty.getName());
             }
-            
-            detailBeanState.setLoadedState();
-            
+                        
             if (!ctx.readArrayNext()){
                 break;
             }
         } while(true);
         
         setValue(bean, collection);
-    
     }
 }

@@ -10,6 +10,7 @@ import com.avaje.ebean.Transaction;
 import com.avaje.ebean.bean.BeanCollection;
 import com.avaje.ebean.bean.BeanCollectionAdd;
 import com.avaje.ebean.bean.BeanCollectionLoader;
+import com.avaje.ebean.bean.EntityBean;
 import com.avaje.ebean.common.BeanList;
 import com.avaje.ebeaninternal.server.text.json.WriteJsonContext;
 
@@ -36,7 +37,10 @@ public final class BeanListHelp<T> implements BeanCollectionHelp<T> {
     this.loader = loader;
   }
 
-  public void add(BeanCollection<?> collection, Object bean) {
+  /**
+   * Internal add bypassing any modify listening.
+   */
+  public void add(BeanCollection<?> collection, EntityBean bean) {
     collection.internalAdd(bean);
   }
 
@@ -67,7 +71,7 @@ public final class BeanListHelp<T> implements BeanCollectionHelp<T> {
       this.list = list;
     }
 
-    public void addBean(Object bean) {
+    public void addBean(EntityBean bean) {
       list.add(bean);
     }
   }
@@ -77,21 +81,30 @@ public final class BeanListHelp<T> implements BeanCollectionHelp<T> {
   }
 
   public Object createEmpty(boolean vanilla) {
-    return vanilla ? new ArrayList<T>() : new BeanList<T>();
+    if (vanilla) {
+      return new ArrayList<T>();
+    }
+    BeanList<T> beanList = new BeanList<T>();
+    if (many != null) {
+      beanList.setModifyListening(many.getModifyListenMode());
+    }
+    return beanList;
   }
 
-  public BeanCollection<T> createReference(Object parentBean, String propertyName) {
+  public BeanCollection<T> createReference(EntityBean parentBean, String propertyName) {
 
-    return new BeanList<T>(loader, parentBean, propertyName);
+    BeanList<T> beanList = new BeanList<T>(loader, parentBean, propertyName);
+    beanList.setModifyListening(many.getModifyListenMode());
+    return beanList;
   }
 
-  public void refresh(EbeanServer server, Query<?> query, Transaction t, Object parentBean) {
+  public void refresh(EbeanServer server, Query<?> query, Transaction t, EntityBean parentBean) {
 
     BeanList<?> newBeanList = (BeanList<?>) server.findList(query, t);
     refresh(newBeanList, parentBean);
   }
 
-  public void refresh(BeanCollection<?> bc, Object parentBean) {
+  public void refresh(BeanCollection<?> bc, EntityBean parentBean) {
 
     BeanList<?> newBeanList = (BeanList<?>) bc;
 
@@ -140,7 +153,7 @@ public final class BeanListHelp<T> implements BeanCollectionHelp<T> {
         ctx.appendComma();
       }
       Object detailBean = list.get(j);
-      targetDescriptor.jsonWrite(ctx, detailBean);
+      targetDescriptor.jsonWrite(ctx, (EntityBean)detailBean);
     }
     ctx.endAssocMany();
   }

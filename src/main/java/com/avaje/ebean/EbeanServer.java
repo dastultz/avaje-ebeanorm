@@ -11,6 +11,7 @@ import javax.persistence.OptimisticLockException;
 import com.avaje.ebean.annotation.CacheStrategy;
 import com.avaje.ebean.cache.ServerCacheManager;
 import com.avaje.ebean.config.ServerConfig;
+import com.avaje.ebean.meta.MetaInfoManager;
 import com.avaje.ebean.text.csv.CsvReader;
 import com.avaje.ebean.text.json.JsonContext;
 
@@ -84,9 +85,12 @@ import com.avaje.ebean.text.json.JsonContext;
 public interface EbeanServer {
 
   /**
-   * Shutdown the EbeanServer.
+   * Shutdown the EbeanServer programmatically.
    * <p>
-   * If the under underlying DataSource is the EbeanORM implementation then you
+   * This method is not normally required. Ebean registers a shutdown hook and shuts down cleanly.
+   * </p>
+   * <p>
+   * If the under underlying DataSource is the Ebean implementation then you
    * also have the option of shutting down the DataSource and deregistering the
    * JDBC driver.
    * </p>
@@ -116,6 +120,13 @@ public interface EbeanServer {
    * Return the ExpressionFactory for this server.
    */
   public ExpressionFactory getExpressionFactory();
+
+  /**
+   * Return the MetaInfoManager which is used to get meta data from the EbeanServer
+   * such as query execution statistics.
+   */
+  public MetaInfoManager getMetaInfoManager();
+
 
   /**
    * Return the BeanState for a given entity bean.
@@ -402,12 +413,25 @@ public interface EbeanServer {
   public <T> T find(Class<T> beanType, Object uid);
 
   /**
-   * Get a reference Object (see {@link Ebean#getReference(Class, Object)}.
+   * Get a reference bean (see {@link Ebean#getReference(Class, Object)}.
    * <p>
    * This will not perform a query against the database.
    * </p>
+   * <pre class="code">
+   * Product product = Ebean.getReference(Product.class, 1);
    * 
-   * @see Ebean#getReference(Class, Object)
+   * // You can get the id without causing a fetch/lazy load
+   * Integer productId = product.getId();
+   * 
+   * // If you try to get any other property a fetch/lazy loading will occur
+   * // This will cause a query to execute...
+   * String name = product.getName();
+   * </pre>
+   * 
+   * @param beanType
+   *          the type of entity bean
+   * @param id
+   *          the id value
    */
   public <T> T getReference(Class<T> beanType, Object uid);
 
@@ -420,21 +444,21 @@ public interface EbeanServer {
   /**
    * Return the Id values of the query as a List.
    */
-  public <T> List<Object> findIds(Query<T> query, Transaction t);
+  public <T> List<Object> findIds(Query<T> query, Transaction transaction);
 
   /**
    * Return a QueryIterator for the query. This is similar to findVisit in that
    * not all the result beans need to be held in memory at the same time and as
    * such is go for processing large queries.
    */
-  public <T> QueryIterator<T> findIterate(Query<T> query, Transaction t);
+  public <T> QueryIterator<T> findIterate(Query<T> query, Transaction transaction);
 
   /**
    * Execute the query visiting the results. This is similar to findIterate in
    * that not all the result beans need to be held in memory at the same time
    * and as such is go for processing large queries.
    */
-  public <T> void findVisit(Query<T> query, QueryResultVisitor<T> visitor, Transaction t);
+  public <T> void findVisit(Query<T> query, QueryResultVisitor<T> visitor, Transaction transaction);
 
   /**
    * Execute a query returning a list of beans.
@@ -469,7 +493,7 @@ public interface EbeanServer {
    *          the transaction (can be null).
    * @return a Future object for the row count query
    */
-  public <T> FutureRowCount<T> findFutureRowCount(Query<T> query, Transaction t);
+  public <T> FutureRowCount<T> findFutureRowCount(Query<T> query, Transaction transaction);
 
   /**
    * Execute find Id's query in a background thread.
@@ -485,7 +509,7 @@ public interface EbeanServer {
    *          the transaction (can be null).
    * @return a Future object for the list of Id's
    */
-  public <T> FutureIds<T> findFutureIds(Query<T> query, Transaction t);
+  public <T> FutureIds<T> findFutureIds(Query<T> query, Transaction transaction);
 
   /**
    * Execute find list query in a background thread.
@@ -500,8 +524,9 @@ public interface EbeanServer {
    * @param t
    *          the transaction (can be null).
    * @return a Future object for the list result of the query
+   * @deprecated
    */
-  public <T> FutureList<T> findFutureList(Query<T> query, Transaction t);
+  public <T> FutureList<T> findFutureList(Query<T> query, Transaction transaction);
 
   /**
    * Execute find list SQL query in a background thread.
@@ -516,13 +541,37 @@ public interface EbeanServer {
    * @param t
    *          the transaction (can be null).
    * @return a Future object for the list result of the query
+   * @deprecated 
    */
-  public SqlFutureList findFutureList(SqlQuery query, Transaction t);
+  public SqlFutureList findFutureList(SqlQuery query, Transaction transaction);
 
   /**
    * Find using a PagingList with explicit transaction and pageSize.
+   * Deprecated in favour of findPagedList().
+   * @deprecated 
+   */  
+  public <T> PagingList<T> findPagingList(Query<T> query, Transaction transaction, int pageSize);
+
+  /**
+   * Return a PagedList for this query.
+   * <p>
+   * The benefit of using this over just using the normal {@link Query#setFirstRow(int)} and
+   * {@link Query#setMaxRows(int)} is that it additionally wraps an optional call to
+   * {@link Query#findFutureRowCount()} to determine total row count, total page count etc.
+   * </p>
+   * <p>
+   * Internally this works using {@link Query#setFirstRow(int)} and {@link Query#setMaxRows(int)} on
+   * the query. This translates into SQL that uses limit offset, rownum or row_number
+   * function to limit the result set.
+   * </p>
+   * 
+   * @param pageIndex
+   *          The zero based index of the page.
+   * @param pageSize
+   *          The number of beans to return per page.
+   * @return The PagedList
    */
-  public <T> PagingList<T> findPagingList(Query<T> query, Transaction t, int pageSize);
+  public <T> PagedList<T> findPagedList(Query<T> query, Transaction transaction, int pageIndex, int pageSize);
 
   /**
    * Execute the query returning a set of entity beans.
@@ -669,7 +718,7 @@ public interface EbeanServer {
   /**
    * Save all the beans in the collection.
    */
-  public int save(Collection<?> it) throws OptimisticLockException;
+  public int save(Collection<?> beans) throws OptimisticLockException;
 
   /**
    * Delete the bean.
@@ -696,7 +745,7 @@ public interface EbeanServer {
   /**
    * Delete the bean given its type and id with an explicit transaction.
    */
-  public int delete(Class<?> beanType, Object id, Transaction t);
+  public int delete(Class<?> beanType, Object id, Transaction transaction);
 
   /**
    * Delete several beans given their type and id values.
@@ -707,7 +756,7 @@ public interface EbeanServer {
    * Delete several beans given their type and id values with an explicit
    * transaction.
    */
-  public void delete(Class<?> beanType, Collection<?> ids, Transaction t);
+  public void delete(Class<?> beanType, Collection<?> ids, Transaction transaction);
 
   /**
    * Execute a SQL Update Delete or Insert statement using the current
@@ -776,204 +825,106 @@ public interface EbeanServer {
   /**
    * Insert or update a bean with an explicit transaction.
    */
-  public void save(Object bean, Transaction t) throws OptimisticLockException;
+  public void save(Object bean, Transaction transaction) throws OptimisticLockException;
 
   /**
    * Save all the beans in the iterator with an explicit transaction.
    */
-  public int save(Iterator<?> it, Transaction t) throws OptimisticLockException;
+  public int save(Iterator<?> it, Transaction transaction) throws OptimisticLockException;
 
   /**
-   * Force an update using the bean.
+   * Save all the beans in the collection with an explicit transaction.
+   */
+  public int save(Collection<?> beans, Transaction transaction) throws OptimisticLockException;
+
+  /**
+   * Saves the bean using an update. If you know you are updating a bean then it is preferrable to
+   * use this update() method rather than save().
    * <p>
-   * You can use this method to FORCE an update to occur (even on a bean that
-   * has not been fetched but say built from JSON or XML). When
-   * {@link EbeanServer#save(Object)} is used Ebean determines whether to use an
-   * insert or an update based on the state of the bean. Using this method will
-   * force an update to occur.
+   * <b>Stateless updates:</b> Note that the bean does not have to be previously fetched to call
+   * update().You can create a new instance and set some of its properties programmatically for via
+   * JSON/XML marshalling etc. This is described as a 'stateless update'.
    * </p>
    * <p>
-   * It is expected that this method is most useful in stateless REST services
-   * or web applications where you have the values you wish to update but no
-   * existing bean.
+   * <b>Optimistic Locking: </b> Note that if the version property is not set when update() is
+   * called then no optimistic locking is performed (internally ConcurrencyMode.NONE is used).
    * </p>
    * <p>
-   * For updates against beans that have not been fetched (say built from JSON
-   * or XML) this will treat deleteMissingChildren=true and will delete any
-   * 'missing children'. Refer to
-   * {@link EbeanServer#update(Object, Set, Transaction, boolean, boolean)}.
+   * <b>{@link ServerConfig#setUpdatesDeleteMissingChildren(boolean)}: </b> When cascade saving to a
+   * OneToMany or ManyToMany the updatesDeleteMissingChildren setting controls if any other children
+   * that are in the database but are not in the collection are deleted.
+   * </p>
+   * <p>
+   * <b>{@link ServerConfig#setUpdateChangesOnly(boolean)}: </b> The updateChangesOnly setting
+   * controls if only the changed properties are included in the update or if all the loaded
+   * properties are included instead.
    * </p>
    * 
    * <pre class="code">
    * 
-   * Customer c = new Customer();
-   * c.setId(7);
-   * c.setName(&quot;ModifiedNameNoOCC&quot;);
-   * 
-   * // generally you should set the version property
-   * // so that Optimistic Concurrency Checking is used.
-   * // If a version property is not set then no Optimistic
-   * // Concurrency Checking occurs for the update
-   * // c.setLastUpdate(lastUpdateTime);
-   * 
-   * // by default the Non-null properties
-   * // are included in the update
-   * ebeanServer.update(c);
+   * // A 'stateless update' example
+   * Customer customer = new Customer();
+   * customer.setId(7);
+   * customer.setName(&quot;ModifiedNameNoOCC&quot;);
+   * ebeanServer.update(customer);
    * 
    * </pre>
+   * 
+   * @see ServerConfig#setUpdatesDeleteMissingChildren(boolean)
+   * @see ServerConfig#setUpdateChangesOnly(boolean)
    */
-  public void update(Object bean);
+  public void update(Object bean) throws OptimisticLockException;
 
   /**
-   * Force an update of the non-null properties of the bean with an explicit
-   * transaction.
-   * <p>
-   * You can use this method to FORCE an update to occur (even on a bean that
-   * has not been fetched but say built from JSON or XML). When
-   * {@link EbeanServer#save(Object)} is used Ebean determines whether to use an
-   * insert or an update based on the state of the bean. Using this method will
-   * force an update to occur.
-   * </p>
-   * <p>
-   * It is expected that this method is most useful in stateless REST services
-   * or web applications where you have the values you wish to update but no
-   * existing bean.
-   * </p>
-   * <p>
-   * For updates against beans that have not been fetched (say built from JSON
-   * or XML) this will treat deleteMissingChildren=true and will delete any
-   * 'missing children'. Refer to
-   * {@link EbeanServer#update(Object, Set, Transaction, boolean, boolean)}.
-   * </p>
+   * Update a bean additionally specifying a transaction.
    */
-  public void update(Object bean, Transaction t);
+  public void update(Object bean, Transaction t) throws OptimisticLockException;
 
   /**
-   * Force an update using the bean explicitly stating the properties to update.
-   * <p>
-   * You can use this method to FORCE an update to occur (even on a bean that
-   * has not been fetched but say built from JSON or XML). When
-   * {@link EbeanServer#save(Object)} is used Ebean determines whether to use an
-   * insert or an update based on the state of the bean. Using this method will
-   * force an update to occur.
-   * </p>
-   * <p>
-   * It is expected that this method is most useful in stateless REST services
-   * or web applications where you have the values you wish to update but no
-   * existing bean.
-   * </p>
-   * <p>
-   * For updates against beans that have not been fetched (say built from JSON
-   * or XML) this will treat deleteMissingChildren=true and will delete any
-   * 'missing children'. Refer to
-   * {@link EbeanServer#update(Object, Set, Transaction, boolean, boolean)}.
-   * </p>
-   * 
-   * <pre class="code">
-   * 
-   * Customer c = new Customer();
-   * c.setId(7);
-   * c.setName(&quot;ModifiedNameNoOCC&quot;);
-   * 
-   * // generally you should set the version property
-   * // so that Optimistic Concurrency Checking is used.
-   * // If a version property is not set then no Optimistic
-   * // Concurrency Checking occurs for the update
-   * // c.setLastUpdate(lastUpdateTime);
-   * 
-   * // by default the Non-null properties
-   * // are included in the update
-   * ebeanServer.update(c);
-   * 
-   * </pre>
-   */
-  public void update(Object bean, Set<String> updateProps);
-
-  /**
-   * Force an update of the specified properties of the bean with an explicit
-   * transaction.
-   * <p>
-   * You can use this method to FORCE an update to occur (even on a bean that
-   * has not been fetched but say built from JSON or XML). When
-   * {@link EbeanServer#save(Object)} is used Ebean determines whether to use an
-   * insert or an update based on the state of the bean. Using this method will
-   * force an update to occur.
-   * </p>
-   * <p>
-   * It is expected that this method is most useful in stateless REST services
-   * or web applications where you have the values you wish to update but no
-   * existing bean.
-   * </p>
-   * <p>
-   * For updates against beans that have not been fetched (say built from JSON
-   * or XML) this will treat deleteMissingChildren=true and will delete any
-   * 'missing children'. Refer to
-   * {@link EbeanServer#update(Object, Set, Transaction, boolean, boolean)}.
-   * </p>
-   */
-  public void update(Object bean, Set<String> updateProps, Transaction t);
-
-  /**
-   * Force an update additionally specifying whether to 'deleteMissingChildren'
-   * when the update cascades to a OneToMany or ManyToMany.
-   * <p>
-   * By default the deleteMissingChildren is true and it is assumed that when
-   * cascade saving a O2M or M2M relationship that the relationship is 'fully
-   * loaded' and any child beans that are no longer on the relationship will be
-   * deleted.
-   * </p>
-   * <p>
-   * You can use this method to FORCE an update to occur (even on a bean that
-   * has not been fetched but say built from JSON or XML). When
-   * {@link EbeanServer#save(Object)} is used Ebean determines whether to use an
-   * insert or an update based on the state of the bean. Using this method will
-   * force an update to occur.
-   * </p>
-   * <p>
-   * It is expected that this method is most useful in stateless REST services
-   * or web applications where you have the values you wish to update but no
-   * existing bean.
-   * </p>
+   * Update a bean additionally specifying a transaction and the deleteMissingChildren setting.
    * 
    * @param bean
    *          the bean to update
-   * @param updateProps
-   *          optionally you can specify the properties to update (can be null).
-   * @param t
-   *          optionally you can specify the transaction to use (can be null).
+   * @param transaction
+   *          the transaction to use (can be null).
    * @param deleteMissingChildren
    *          specify false if you do not want 'missing children' of a OneToMany
    *          or ManyToMany to be automatically deleted.
-   * @param updateNullProperties
-   *          specify true if by default you want properties with null values to
-   *          be included in the update and false if those properties should be
-   *          treated as 'unloaded' and excluded from the update. This only
-   *          takes effect if the updateProps is null.
+
    */
-  public void update(Object bean, Set<String> updateProps, Transaction t,
-      boolean deleteMissingChildren, boolean updateNullProperties);
+  public void update(Object bean, Transaction transaction, boolean deleteMissingChildren) throws OptimisticLockException;
 
   /**
-   * Force the bean to be saved with an explicit insert.
-   * <p>
-   * Typically you would use save() and let Ebean determine if the bean should
-   * be inserted or updated. This can be useful when you are transferring data
-   * between databases and want to explicitly insert a bean into a different
-   * database that it came from.
-   * </p>
+   * Update a collection of beans. If there is no current transaction one is created and used to
+   * update all the beans in the collection.
+   */
+  public void update(Collection<?> beans) throws OptimisticLockException;
+
+  /**
+   * Update a collection of beans with an explicit transaction.
+   */
+  public void update(Collection<?> beans, Transaction transaction) throws OptimisticLockException;
+  
+  /**
+   * Insert the bean.
    */
   public void insert(Object bean);
 
   /**
-   * Force the bean to be saved with an explicit insert.
-   * <p>
-   * Typically you would use save() and let Ebean determine if the bean should
-   * be inserted or updated. This can be useful when you are transferring data
-   * between databases and want to explicitly insert a bean into a different
-   * database that it came from.
-   * </p>
+   * Insert the bean with a transaction.
    */
   public void insert(Object bean, Transaction t);
+
+  /**
+   * Insert a collection of beans. If there is no current transaction one is created and used to
+   * insert all the beans in the collection.
+   */
+  public void insert(Collection<?> beans);
+
+  /**
+   * Insert a collection of beans with an explicit transaction.
+   */
+  public void insert(Collection<?> beans, Transaction t);
 
   /**
    * Delete the associations (from the intersection table) of a ManyToMany given
@@ -1149,5 +1100,6 @@ public interface EbeanServer {
    * Create a JsonContext that will use the default configuration options.
    */
   public JsonContext createJsonContext();
+
 
 }

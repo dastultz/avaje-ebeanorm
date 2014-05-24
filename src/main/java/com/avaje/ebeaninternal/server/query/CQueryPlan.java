@@ -3,10 +3,14 @@ package com.avaje.ebeaninternal.server.query;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 
+import com.avaje.ebean.bean.ObjectGraphNode;
 import com.avaje.ebean.config.dbplatform.SqlLimitResponse;
-import com.avaje.ebean.meta.MetaQueryStatistic;
+import com.avaje.ebeaninternal.api.HashQueryPlan;
+import com.avaje.ebeaninternal.api.HashQueryPlanBuilder;
+import com.avaje.ebeaninternal.api.SpiEbeanServer;
 import com.avaje.ebeaninternal.server.core.OrmQueryRequest;
 import com.avaje.ebeaninternal.server.deploy.BeanProperty;
+import com.avaje.ebeaninternal.server.query.CQueryPlanStats.Snapshot;
 import com.avaje.ebeaninternal.server.type.DataBind;
 import com.avaje.ebeaninternal.server.type.DataReader;
 import com.avaje.ebeaninternal.server.type.RsetDataReader;
@@ -32,9 +36,11 @@ import com.avaje.ebeaninternal.server.type.RsetDataReader;
  */
 public class CQueryPlan {
 
+  private final SpiEbeanServer server;
+  
 	private final boolean autofetchTuned;
 		
-	private final int hash;
+	private final HashQueryPlan hash;
 	
 	private final boolean rawSql;
 
@@ -51,36 +57,43 @@ public class CQueryPlan {
 	 */
 	private final BeanProperty[] encryptedProps;
 	
-	private CQueryStats queryStats = new CQueryStats();
+	private final CQueryPlanStats stats;
+
+  private final Class<?> beanType;
 
 	/**
 	 * Create a query plan based on a OrmQueryRequest.
 	 */
-	public CQueryPlan(OrmQueryRequest<?> request, SqlLimitResponse sqlRes, SqlTree sqlTree, 
-			boolean rawSql, String logWhereSql, String luceneQueryDescription) {
-		
-		this.hash = request.getQueryPlanHash();
-		this.autofetchTuned = request.getQuery().isAutofetchTuned();
-		if (sqlRes != null){
-	        this.sql = sqlRes.getSql();
-	        this.rowNumberIncluded = sqlRes.isIncludesRowNumberColumn();		    
-		} else {
-		    this.sql = luceneQueryDescription;
-		    this.rowNumberIncluded = false;
-		}
-		this.sqlTree = sqlTree;
-		this.rawSql = rawSql;
-		this.logWhereSql = logWhereSql;
-		this.encryptedProps = sqlTree.getEncryptedProps();
-	}
+  public CQueryPlan(OrmQueryRequest<?> request, SqlLimitResponse sqlRes, SqlTree sqlTree, boolean rawSql, String logWhereSql) {
+
+    this.server = request.getServer();
+    this.beanType = request.getBeanDescriptor().getBeanType();
+    this.stats = new CQueryPlanStats(this, server.isCollectQueryOrigins());
+    this.hash = request.getQueryPlanHash();
+    this.autofetchTuned = request.getQuery().isAutofetchTuned();
+    if (sqlRes != null) {
+      this.sql = sqlRes.getSql();
+      this.rowNumberIncluded = sqlRes.isIncludesRowNumberColumn();
+    } else {
+      this.sql = null;
+      this.rowNumberIncluded = false;
+    }
+    this.sqlTree = sqlTree;
+    this.rawSql = rawSql;
+    this.logWhereSql = logWhereSql;
+    this.encryptedProps = sqlTree.getEncryptedProps();
+  }
 
 	/**
 	 * Create a query plan for a raw sql query.
 	 */
-	public CQueryPlan(String sql, SqlTree sqlTree, 
+	public CQueryPlan(OrmQueryRequest<?> request, String sql, SqlTree sqlTree, 
 			boolean rawSql, boolean rowNumberIncluded, String logWhereSql) {
-		
-		this.hash = 0;
+			  
+	  this.server = request.getServer();
+	  this.beanType = request.getBeanDescriptor().getBeanType();
+	  this.stats = new CQueryPlanStats(this, server.isCollectQueryOrigins());
+		this.hash = buildHash(sql, rawSql, rowNumberIncluded, logWhereSql);
 		this.autofetchTuned = false;
 		this.sql = sql;
 		this.sqlTree = sqlTree;
@@ -90,29 +103,41 @@ public class CQueryPlan {
 		this.encryptedProps = sqlTree.getEncryptedProps();
 	}
 
-	public boolean isLucene() {
-	    return false;
+
+  private HashQueryPlan buildHash(String sql, boolean rawSql, boolean rowNumberIncluded, String logWhereSql) {
+	  HashQueryPlanBuilder builder = new HashQueryPlanBuilder();
+	  builder.add(sql).add(rawSql).add(rowNumberIncluded).add(logWhereSql);
+	  builder.addRawSql(sql);
+	  return builder.build();
+	}
+
+	public String toString() {
+	  return beanType+" hash:"+hash;
 	}
 	
-    public DataReader createDataReader(ResultSet rset){
-        
-        return new RsetDataReader(rset);
-    }
+	public Class<?> getBeanType() {
+    return beanType;
+  }
 
-	public void bindEncryptedProperties(DataBind dataBind) throws SQLException {
-	    if (encryptedProps != null){
-	        for (int i = 0; i < encryptedProps.length; i++) {
-	            String key = encryptedProps[i].getEncryptKey().getStringValue();
-	            dataBind.setString(key);
-            }
-	    }
-	}
+  public DataReader createDataReader(ResultSet rset) {
+
+    return new RsetDataReader(rset);
+  }
+
+  public void bindEncryptedProperties(DataBind dataBind) throws SQLException {
+    if (encryptedProps != null) {
+      for (int i = 0; i < encryptedProps.length; i++) {
+        String key = encryptedProps[i].getEncryptKey().getStringValue();
+        dataBind.setString(key);
+      }
+    }
+  }
 	
 	public boolean isAutofetchTuned() {
 		return autofetchTuned;
 	}
 
-	public int getHash() {
+	public HashQueryPlan getHash() {
 		return hash;
 	}
 
@@ -140,33 +165,37 @@ public class CQueryPlan {
 	 * Reset the query statistics.
 	 */
 	public void resetStatistics() {
-		queryStats = new CQueryStats();
+		stats.reset();
 	}
 	
 	/**
 	 * Register an execution time against this query plan;
 	 */
-	public void executionTime(int loadedBeanCount, int timeMicros) {
-		// Atomic operation
-		queryStats = queryStats.add(loadedBeanCount, timeMicros);
+	public void executionTime(long loadedBeanCount, long timeMicros, ObjectGraphNode objectGraphNode) {
+
+		stats.add(loadedBeanCount, timeMicros, objectGraphNode);
+		if (objectGraphNode != null) {
+  		// collect stats based on objectGraphNode for lazy loading reporting
+  		server.collectQueryStats(objectGraphNode, loadedBeanCount, timeMicros);
+		}
 	}
 
+  public Snapshot getSnapshot(boolean reset) {
+    return stats.getSnapshot(reset);
+  }
+  
 	/**
 	 * Return the current query statistics.
 	 */
-	public CQueryStats getQueryStats() {
-		return queryStats;
+	public CQueryPlanStats getQueryStats() {
+		return stats;
 	}
 	
 	/**
 	 * Return the time this query plan was last used.
 	 */
 	public long getLastQueryTime(){
-	    return queryStats.getLastQueryTime();
+	    return stats.getLastQueryTime();
 	}
 	
-	public MetaQueryStatistic createMetaQueryStatistic(String beanName) {
-		return queryStats.createMetaQueryStatistic(beanName, this);
-	}
-
 }

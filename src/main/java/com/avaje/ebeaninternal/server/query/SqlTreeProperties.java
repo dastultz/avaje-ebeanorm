@@ -3,7 +3,6 @@ package com.avaje.ebeaninternal.server.query;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 
 import com.avaje.ebeaninternal.server.deploy.BeanProperty;
 import com.avaje.ebeaninternal.server.deploy.TableJoin;
@@ -13,39 +12,36 @@ import com.avaje.ebeaninternal.server.deploy.TableJoin;
  */
 public class SqlTreeProperties {
 
-	/**
-	 * The included Properties that will be used by EntityBeanIntercept
-	 * to determine lazy loading on partial objects.
-	 */
-	Set<String> includedProps;
+  private static final TableJoin[] EMPTY_TABLE_JOINS = new TableJoin[0];
 
 	/**
 	 * True if this node of the tree should have read only entity beans.
 	 */
-	boolean readOnly;
+	private boolean readOnly;
 
 	/**
 	 * set to false if the id field is not included.
 	 */
-	boolean includeId = true;
+	private boolean includeId = true;
 
-	TableJoin[] tableJoins = new TableJoin[0];
+	private TableJoin[] tableJoins = EMPTY_TABLE_JOINS;
 
 	/**
 	 * The bean properties in order.
 	 */
-	List<BeanProperty> propsList = new ArrayList<BeanProperty>();
+	private List<BeanProperty> propsList = new ArrayList<BeanProperty>();
 
 	/**
 	 * Maintain a list of property names to detect embedded bean additions.
 	 */
-	LinkedHashSet<String> propNames = new LinkedHashSet<String>();
+	private LinkedHashSet<String> propNames = new LinkedHashSet<String>();
+
+  private boolean allProperties;
 	
 	public SqlTreeProperties() {
-
 	}
 	
-	public boolean containsProperty(String propName){
+  public boolean containsProperty(String propName){
 		return propNames.contains(propName);
 	}
 
@@ -56,9 +52,8 @@ public class SqlTreeProperties {
 	}
 
 	public void add(BeanProperty prop) {
-		propsList.add(prop);
-		propNames.add(prop.getName());
-
+    propsList.add(prop);
+	  propNames.add(prop.getName());
 	}
 	
 	public BeanProperty[] getProps() {
@@ -74,15 +69,7 @@ public class SqlTreeProperties {
 	}
 
 	public boolean isPartialObject() {
-		return includedProps != null;
-	}
-	
-	public Set<String> getIncludedProperties() {
-		return includedProps;
-	}
-
-	public void setIncludedProperties(Set<String> includedProps) {
-		this.includedProps = includedProps;
+		return !allProperties;
 	}
 
 	public boolean isReadOnly() {
@@ -101,4 +88,12 @@ public class SqlTreeProperties {
 		this.tableJoins = tableJoins;
 	}
 
+  public void setAllProperties(boolean allProperties) {
+    this.allProperties = allProperties;
+  }
+
+  public boolean isAllProperties() {
+    return allProperties;
+  }
+  
 }

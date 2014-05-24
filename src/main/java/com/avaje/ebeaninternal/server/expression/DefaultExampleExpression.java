@@ -5,7 +5,9 @@ import java.util.Iterator;
 
 import com.avaje.ebean.ExampleExpression;
 import com.avaje.ebean.LikeType;
+import com.avaje.ebean.bean.EntityBean;
 import com.avaje.ebean.event.BeanQueryRequest;
+import com.avaje.ebeaninternal.api.HashQueryPlanBuilder;
 import com.avaje.ebeaninternal.api.ManyWhereJoins;
 import com.avaje.ebeaninternal.api.SpiExpression;
 import com.avaje.ebeaninternal.api.SpiExpressionRequest;
@@ -42,7 +44,7 @@ public class DefaultExampleExpression implements SpiExpression, ExampleExpressio
   /**
    * The example bean containing the properties.
    */
-  private final Object entity;
+  private final EntityBean entity;
 
   /**
    * Set to true to use case insensitive expressions.
@@ -65,7 +67,6 @@ public class DefaultExampleExpression implements SpiExpression, ExampleExpressio
    */
   private ArrayList<SpiExpression> list;
 
-  private final FilterExprPath pathPrefix;
 
   /**
    * Construct the query by example expression.
@@ -77,8 +78,7 @@ public class DefaultExampleExpression implements SpiExpression, ExampleExpressio
    * @param likeType
    *          the type of Like wild card used
    */
-  public DefaultExampleExpression(FilterExprPath pathPrefix, Object entity, boolean caseInsensitive, LikeType likeType) {
-    this.pathPrefix = pathPrefix;
+  public DefaultExampleExpression(EntityBean entity, boolean caseInsensitive, LikeType likeType) {
     this.entity = entity;
     this.caseInsensitive = caseInsensitive;
     this.likeType = likeType;
@@ -163,28 +163,26 @@ public class DefaultExampleExpression implements SpiExpression, ExampleExpressio
   /**
    * Return a hash for autoFetch query identification.
    */
-  public int queryAutoFetchHash() {
+  public void queryAutoFetchHash(HashQueryPlanBuilder builder) {
     // we have not yet built the list of expressions
     // so just based on the class name
-    return DefaultExampleExpression.class.getName().hashCode();
+    builder.add(DefaultExampleExpression.class);
   }
 
   /**
    * Return a hash for query plan identification.
    */
-  public int queryPlanHash(BeanQueryRequest<?> request) {
+  public void queryPlanHash(BeanQueryRequest<?> request, HashQueryPlanBuilder builder) {
 
     // this is always called once, and always called before
     // addSql() and addBindValues() methods
     list = buildExpressions(request);
 
-    int hc = DefaultExampleExpression.class.getName().hashCode();
+    builder.add(DefaultExampleExpression.class);
 
     for (int i = 0; i < list.size(); i++) {
-      hc = hc * 31 + list.get(i).queryPlanHash(request);
+      list.get(i).queryPlanHash(request, builder);
     }
-
-    return hc;
   }
 
   /**
@@ -218,13 +216,13 @@ public class DefaultExampleExpression implements SpiExpression, ExampleExpressio
 
       if (beanProperty.isScalar() && value != null) {
         if (value instanceof String) {
-          list.add(new LikeExpression(pathPrefix, propName, (String) value, caseInsensitive, likeType));
+          list.add(new LikeExpression(propName, (String) value, caseInsensitive, likeType));
         } else {
           if (!includeZeros && isZero(value)) {
             // exclude the zero values typically to weed out
             // primitive int and long that initialise to 0
           } else {
-            list.add(new SimpleExpression(pathPrefix, propName, SimpleExpression.Op.EQ, value));
+            list.add(new SimpleExpression(propName, SimpleExpression.Op.EQ, value));
           }
         }
       }

@@ -10,7 +10,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.avaje.ebeaninternal.api.ManyWhereJoins;
+import com.avaje.ebeaninternal.api.PropertyJoin;
 import com.avaje.ebeaninternal.api.SpiQuery;
 import com.avaje.ebeaninternal.api.SpiQuery.Type;
 import com.avaje.ebeaninternal.server.core.OrmQueryRequest;
@@ -24,8 +28,6 @@ import com.avaje.ebeaninternal.server.deploy.TableJoin;
 import com.avaje.ebeaninternal.server.el.ElPropertyValue;
 import com.avaje.ebeaninternal.server.querydefn.OrmQueryDetail;
 import com.avaje.ebeaninternal.server.querydefn.OrmQueryProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Factory for SqlTree.
@@ -68,8 +70,7 @@ public class SqlTreeBuilder {
   /**
    * Construct for RawSql query.
    */
-  public SqlTreeBuilder(OrmQueryRequest<?> request, CQueryPredicates predicates,
-      OrmQueryDetail queryDetail) {
+  public SqlTreeBuilder(OrmQueryRequest<?> request, CQueryPredicates predicates, OrmQueryDetail queryDetail) {
 
     this.rawSql = true;
     this.desc = request.getBeanDescriptor();
@@ -96,7 +97,7 @@ public class SqlTreeBuilder {
     this.desc = request.getBeanDescriptor();
     this.query = request.getQuery();
 
-    this.subQuery = Type.SUBQUERY.equals(query.getType());
+    this.subQuery = Type.SUBQUERY.equals(query.getType()) || Type.ID_LIST.equals(query.getType());
     this.includeJoin = query.getIncludeTableJoin();
     this.manyWhereJoins = query.getManyWhereJoins();
     this.queryDetail = query.getDetail();
@@ -169,7 +170,7 @@ public class SqlTreeBuilder {
     if (rawSql) {
       return "Not Used";
     }
-    rootNode.appendFrom(ctx, false);
+    rootNode.appendFrom(ctx, SqlJoinType.AUTO);
     return ctx.getContent();
   }
 
@@ -181,7 +182,7 @@ public class SqlTreeBuilder {
     if (!rawSql) {
       alias.addJoin(queryDetail.getIncludes(), desc);
       alias.addJoin(predicates.getPredicateIncludes(), desc);
-      alias.addManyWhereJoins(manyWhereJoins.getJoins());
+      alias.addManyWhereJoins(manyWhereJoins.getPropertyNames());
 
       // build set of table alias
       alias.buildAlias();
@@ -237,12 +238,10 @@ public class SqlTreeBuilder {
    */
   private void addManyWhereJoins(List<SqlTreeNode> myJoinList) {
 
-    Set<String> includes = manyWhereJoins.getJoins();
-    for (String joinProp : includes) {
-
-      BeanPropertyAssoc<?> beanProperty = (BeanPropertyAssoc<?>) desc
-          .getBeanPropertyFromPath(joinProp);
-      SqlTreeNodeManyWhereJoin nodeJoin = new SqlTreeNodeManyWhereJoin(joinProp, beanProperty);
+    Collection<PropertyJoin> includes = manyWhereJoins.getPropertyJoins();
+    for (PropertyJoin joinProp : includes) {
+      BeanPropertyAssoc<?> beanProperty = (BeanPropertyAssoc<?>) desc.getBeanPropertyFromPath(joinProp.getProperty());
+      SqlTreeNodeManyWhereJoin nodeJoin = new SqlTreeNodeManyWhereJoin(joinProp.getProperty(), beanProperty, joinProp.getSqlJoinType());
       myJoinList.add(nodeJoin);
     }
   }
@@ -256,7 +255,10 @@ public class SqlTreeBuilder {
 
     if (prefix == null) {
       buildExtraJoins(desc, myList);
-      return new SqlTreeNodeRoot(desc, props, myList, !subQuery, includeJoin);
+
+      // Optional many property for lazy loading query
+      BeanPropertyAssocMany<?> lazyLoadMany = (query == null) ? null : query.getLazyLoadForParentsProperty();
+      return new SqlTreeNodeRoot(desc, props, myList, !subQuery, includeJoin, lazyLoadMany);
 
     } else if (prop instanceof BeanPropertyAssocMany<?>) {
       return new SqlTreeNodeManyRoot(prefix, (BeanPropertyAssocMany<?>) prop, props, myList);
@@ -288,12 +290,11 @@ public class SqlTreeBuilder {
     // support the predicates or order by clauses.
 
     // remove ManyWhereJoins from the predicateIncludes
-    predicateIncludes.removeAll(manyWhereJoins.getJoins());
+    predicateIncludes.removeAll(manyWhereJoins.getPropertyNames());
 
     // look for predicateIncludes that are not in selectIncludes and add
     // them as extra joins to the query
-    IncludesDistiller extraJoinDistill = new IncludesDistiller(desc, selectIncludes,
-        predicateIncludes);
+    IncludesDistiller extraJoinDistill = new IncludesDistiller(desc, selectIncludes, predicateIncludes);
 
     Collection<SqlTreeNodeExtraJoin> extraJoins = extraJoinDistill.getExtraJoinRootNodes();
     if (extraJoins.isEmpty()) {
@@ -330,8 +331,7 @@ public class SqlTreeBuilder {
 
     BeanProperty p = desc.findBeanProperty(propName);
     if (p == null) {
-      logger
-          .error("property [" + propName + "]not found on " + desc + " for query - excluding it.");
+      logger.error("property [" + propName + "]not found on " + desc + " for query - excluding it.");
 
     } else if (p instanceof BeanPropertyAssoc<?> && p.isEmbedded()) {
       // if the property is embedded we need to lookup the real column name
@@ -364,21 +364,15 @@ public class SqlTreeBuilder {
       if (!selectProps.containsProperty(baseName)) {
         BeanProperty p = desc.findBeanProperty(baseName);
         if (p == null) {
-          String m = "property [" + propName + "] not found on " + desc
-              + " for query - excluding it.";
-          logger.error(m);
+          logger.error("property [" + propName + "] not found on " + desc + " for query - excluding it.");
 
         } else if (p.isEmbedded()) {
           // add the embedded bean (and effectively
           // all its properties)
           selectProps.add(p);
-          // also make sure it is added to included properties
-          // to avoid unnecessary lazy loading
-          selectProps.getIncludedProperties().add(baseName);
 
         } else {
-          String m = "property [" + p.getFullBeanName()
-              + "] expected to be an embedded bean for query - excluding it.";
+          String m = "property [" + p.getFullBeanName() + "] expected to be an embedded bean for query - excluding it.";
           logger.error(m);
         }
       }
@@ -388,8 +382,9 @@ public class SqlTreeBuilder {
       // sub class hierarchy if required
       BeanProperty p = desc.findBeanProperty(propName);
       if (p == null) {
-        logger.error("property [" + propName + "] not found on " + desc
-            + " for query - excluding it.");
+        logger.error("property [" + propName + "] not found on " + desc + " for query - excluding it.");
+        p =  desc.findBeanProperty("id");
+        selectProps.add(p);
 
       } else if (p.isId()) {
         // do not bother to include id for normal queries as the
@@ -412,12 +407,10 @@ public class SqlTreeBuilder {
     }
   }
 
-  private SqlTreeProperties getBaseSelectPartial(BeanDescriptor<?> desc,
-      OrmQueryProperties queryProps) {
+  private SqlTreeProperties getBaseSelectPartial(BeanDescriptor<?> desc, OrmQueryProperties queryProps) {
 
     SqlTreeProperties selectProps = new SqlTreeProperties();
     selectProps.setReadOnly(queryProps.isReadOnly());
-    selectProps.setIncludedProperties(queryProps.getAllIncludedProperties());
 
     // add properties in the order in which they appear
     // in the query. Gives predictable sql/properties for
@@ -445,6 +438,7 @@ public class SqlTreeBuilder {
     }
 
     SqlTreeProperties selectProps = new SqlTreeProperties();
+    selectProps.setAllProperties(true);
 
     // normal simple properties of the bean
     selectProps.add(desc.propertiesBaseScalar());
@@ -486,9 +480,7 @@ public class SqlTreeBuilder {
       if (manyProperty != null) {
         // only one many associated allowed to be included in fetch
         if (logger.isDebugEnabled()) {
-          String msg = "Not joining [" + propName + "] as already joined to a Many[" + manyProperty
-              + "].";
-          logger.debug(msg);
+          logger.debug("Not joining [" + propName + "] as already joined to a Many[" + manyProperty + "].");
         }
         return false;
       }

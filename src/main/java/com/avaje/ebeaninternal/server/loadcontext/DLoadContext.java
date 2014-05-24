@@ -9,7 +9,6 @@ import com.avaje.ebean.bean.EntityBeanIntercept;
 import com.avaje.ebean.bean.ObjectGraphNode;
 import com.avaje.ebean.bean.ObjectGraphOrigin;
 import com.avaje.ebean.bean.PersistenceContext;
-import com.avaje.ebean.config.GlobalProperties;
 import com.avaje.ebeaninternal.api.LoadContext;
 import com.avaje.ebeaninternal.api.LoadSecondaryQuery;
 import com.avaje.ebeaninternal.api.SpiEbeanServer;
@@ -24,8 +23,6 @@ import com.avaje.ebeaninternal.server.querydefn.OrmQueryProperties;
 
 /**
  * Default implementation of LoadContext.
- * 
- * @author rbygrave
  */
 public class DLoadContext implements LoadContext {
 
@@ -48,32 +45,23 @@ public class DLoadContext implements LoadContext {
 	private final String relativePath;	
 	private final ObjectGraphOrigin origin;
 	private final boolean useAutofetchManager;
-	private final boolean hardRefs;
 	
 	private final Map<String,ObjectGraphNode> nodePathMap = new HashMap<String, ObjectGraphNode>();
 		
 	private PersistenceContext persistenceContext;
 	private List<OrmQueryProperties> secQuery;
 
+
 	public DLoadContext(SpiEbeanServer ebeanServer, BeanDescriptor<?> rootDescriptor, Boolean readOnly, SpiQuery<?> query) {
-		this(ebeanServer, rootDescriptor, readOnly, 
-				Boolean.FALSE.equals(query.isUseBeanCache()), 
-				query.getParentNode(),
-				query.getAutoFetchManager() != null);
-	}
-	
-	public DLoadContext(SpiEbeanServer ebeanServer, BeanDescriptor<?> rootDescriptor, Boolean readOnly, 
-			boolean excludeBeanCache, ObjectGraphNode parentNode, boolean useAutofetchManager) {
 		
 		this.ebeanServer = ebeanServer;
-		this.hardRefs = GlobalProperties.getBoolean("ebean.hardrefs", false);
 		this.defaultBatchSize = ebeanServer.getLazyLoadBatchSize();
 		this.rootDescriptor = rootDescriptor;
-		this.rootBeanContext = new DLoadBeanContext(this, rootDescriptor, null, defaultBatchSize, null, createBeanLoadList());
 		this.readOnly = readOnly;
-		this.excludeBeanCache = excludeBeanCache;
-		this.useAutofetchManager = useAutofetchManager;		
+		this.excludeBeanCache = Boolean.FALSE.equals(query.isUseBeanCache());
+		this.useAutofetchManager = query.getAutoFetchManager() != null;		
 				
+		ObjectGraphNode parentNode = query.getParentNode();
 		if (parentNode != null){
 			this.origin = parentNode.getOriginQueryPoint();
 			this.relativePath = parentNode.getPath();
@@ -81,31 +69,34 @@ public class DLoadContext implements LoadContext {
 			this.origin = null;
 			this.relativePath = null;
 		}
+		
+		// initialise rootBeanContext after origin and relativePath have been set
+    this.rootBeanContext = new DLoadBeanContext(this, rootDescriptor, null, defaultBatchSize, null);
 	}	
 
-	protected boolean isExcludeBeanCache() {
-    	return excludeBeanCache;
+  protected boolean isExcludeBeanCache() {
+    return excludeBeanCache;
+  }
+
+  /**
+   * Return the minimum batch size when using QueryIterator with query joins.
+   */
+  public int getSecondaryQueriesMinBatchSize(OrmQueryRequest<?> parentRequest, int defaultQueryBatch) {
+
+    if (secQuery == null) {
+      return -1;
     }
 
-	/**
-	 * Return the minimum batch size when using QueryIterator with query joins.
-	 */
-    public int getSecondaryQueriesMinBatchSize(OrmQueryRequest<?> parentRequest, int defaultQueryBatch) {
-
-        if (secQuery == null){
-            return -1;
-        }
-        
-        int maxBatch = 0;
-        for (int i = 0; i < secQuery.size(); i++) {
-            int batchSize = secQuery.get(i).getQueryFetchBatch();
-            if (batchSize == 0){
-                batchSize = defaultQueryBatch;
-            }
-            maxBatch = Math.max(maxBatch, batchSize);
-        }
-        return maxBatch;
+    int maxBatch = 0;
+    for (int i = 0; i < secQuery.size(); i++) {
+      int batchSize = secQuery.get(i).getQueryFetchBatch();
+      if (batchSize == 0) {
+        batchSize = defaultQueryBatch;
+      }
+      maxBatch = Math.max(maxBatch, batchSize);
     }
+    return maxBatch;
+  }
     
 	/**
 	 * Execute all the secondary queries.
@@ -210,6 +201,14 @@ public class DLoadContext implements LoadContext {
 	public String getRelativePath() {
 		return relativePath;
 	}
+	
+	protected String getFullPath(String path) {
+    if (relativePath == null) {
+      return path;
+    } else {
+      return relativePath + "." + path;
+    }
+	}
 
 	protected SpiEbeanServer getEbeanServer() {
 		return ebeanServer;
@@ -282,24 +281,7 @@ public class DLoadContext implements LoadContext {
 
 		BeanPropertyAssocMany<?> p = (BeanPropertyAssocMany<?>)getBeanProperty(rootDescriptor, path);
 
-		return new DLoadManyContext(this, p, path, batchSize, queryProps, createBeanCollectionLoadList());
-	}
-
-	
-	private DLoadList<EntityBeanIntercept> createBeanLoadList() {
-		if (hardRefs){
-			return new DLoadHardList<EntityBeanIntercept>();
-		} else {
-			return new DLoadWeakList<EntityBeanIntercept>();
-		}
-	}
-
-	private DLoadList<BeanCollection<?>> createBeanCollectionLoadList() {
-		if (hardRefs){
-			return new DLoadHardList<BeanCollection<?>>();
-		} else {
-			return new DLoadWeakList<BeanCollection<?>>();
-		}
+		return new DLoadManyContext(this, p, path, batchSize, queryProps);
 	}
 
 	private DLoadBeanContext createBeanContext(String path, int batchSize, OrmQueryProperties queryProps) {
@@ -307,11 +289,10 @@ public class DLoadContext implements LoadContext {
 		BeanPropertyAssoc<?> p = (BeanPropertyAssoc<?>)getBeanProperty(rootDescriptor, path);
 		BeanDescriptor<?> targetDescriptor = p.getTargetDescriptor();
 
-		return new DLoadBeanContext(this, targetDescriptor, path, batchSize, queryProps, createBeanLoadList());			
+		return new DLoadBeanContext(this, targetDescriptor, path, batchSize, queryProps);			
 	}
 	
 	private BeanProperty getBeanProperty(BeanDescriptor<?> desc, String path){
-		
 		return desc.getBeanPropertyFromPath(path);
 	}
 	

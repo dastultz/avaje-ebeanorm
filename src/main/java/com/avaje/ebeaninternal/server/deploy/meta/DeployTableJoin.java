@@ -7,7 +7,9 @@ import javax.persistence.JoinColumn;
 import com.avaje.ebeaninternal.server.core.Message;
 import com.avaje.ebeaninternal.server.deploy.BeanCascadeInfo;
 import com.avaje.ebeaninternal.server.deploy.BeanTable;
+import com.avaje.ebeaninternal.server.deploy.InheritInfo;
 import com.avaje.ebeaninternal.server.deploy.TableJoin;
+import com.avaje.ebeaninternal.server.query.SqlJoinType;
 
 /**
  * Represents a join to another table during deployment phase.
@@ -31,7 +33,7 @@ public class DeployTableJoin {
     /**
      * The type of join. LEFT OUTER etc.
      */
-    private String type = TableJoin.JOIN;
+    private SqlJoinType type = SqlJoinType.INNER;
 
     /**
      * The list of properties mapped to this joined table.
@@ -48,6 +50,7 @@ public class DeployTableJoin {
      */
     private BeanCascadeInfo cascadeInfo = new BeanCascadeInfo();
     
+    private InheritInfo inheritInfo;
 
     /**
      * Create a DeployTableJoin.
@@ -160,7 +163,7 @@ public class DeployTableJoin {
     /**
      * Return the type of join. LEFT OUTER JOIN etc.
      */
-    public String getType() {
+    public SqlJoinType getType() {
         return type;
     }
 
@@ -168,7 +171,11 @@ public class DeployTableJoin {
      * Return true if this join is a left outer join.
      */
     public boolean isOuterJoin() {
-        return type.equals(TableJoin.LEFT_OUTER);
+        return type == SqlJoinType.OUTER;
+    }
+    
+    private void setType(SqlJoinType type) {
+      this.type = type;
     }
     
     /**
@@ -177,13 +184,13 @@ public class DeployTableJoin {
     public void setType(String joinType) {
         joinType = joinType.toUpperCase();
         if (joinType.equalsIgnoreCase(TableJoin.JOIN)) {
-            type = TableJoin.JOIN;
+            type = SqlJoinType.INNER;
         } else if (joinType.indexOf("LEFT") > -1) {
-            type = TableJoin.LEFT_OUTER;
+            type = SqlJoinType.OUTER;
         } else if (joinType.indexOf("OUTER") > -1) {
-            type = TableJoin.LEFT_OUTER;
+            type = SqlJoinType.OUTER;
         } else if (joinType.indexOf("INNER") > -1) {
-            type = TableJoin.JOIN;
+            type = SqlJoinType.INNER;
         } else {
             throw new RuntimeException(Message.msg("join.type.unknown", joinType));
         }
@@ -205,4 +212,12 @@ public class DeployTableJoin {
     	
     	return destJoin;
     }
+
+	public InheritInfo getInheritInfo() {
+		return inheritInfo;
+	}
+
+	public void setInheritInfo(InheritInfo inheritInfo) {
+		this.inheritInfo = inheritInfo;
+	}
 }

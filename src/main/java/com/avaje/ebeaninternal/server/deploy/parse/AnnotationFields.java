@@ -38,6 +38,7 @@ import com.avaje.ebean.config.dbplatform.IdType;
 import com.avaje.ebeaninternal.server.deploy.generatedproperty.GeneratedPropertyFactory;
 import com.avaje.ebeaninternal.server.deploy.meta.DeployBeanProperty;
 import com.avaje.ebeaninternal.server.deploy.meta.DeployBeanPropertyAssoc;
+import com.avaje.ebeaninternal.server.deploy.meta.DeployBeanPropertyAssocOne;
 import com.avaje.ebeaninternal.server.deploy.meta.DeployBeanPropertyCompound;
 import com.avaje.ebeaninternal.server.idgen.UuidIdGenerator;
 import com.avaje.ebeaninternal.server.lib.util.StringHelper;
@@ -103,6 +104,12 @@ public class AnnotationFields extends AnnotationParser {
       prop.setEmbedded(true);
     }
 
+    if (prop instanceof DeployBeanPropertyAssocOne<?>) {
+      if (prop.isId() && !prop.isEmbedded()) {
+        prop.setEmbedded(true);
+      }
+      readEmbeddedAttributeOverrides((DeployBeanPropertyAssocOne<?>)prop);
+    }
   }
 
   private void readField(DeployBeanProperty prop) {
@@ -193,9 +200,10 @@ public class AnnotationFields extends AnnotationParser {
 
     if (validationAnnotations) {
       NotNull notNull = get(prop, NotNull.class);
-      if (notNull != null) {
-        // explicitly specify a version column
-        prop.setNullable(false);
+      if (notNull != null && isNotNullOnAllValidationGroups(notNull.groups())) {
+        // Not null on all validation groups so enable
+        // DDL generation of Not Null Constraint
+        prop.setNullable(false);  
       }
   
       Size size = get(prop, Size.class);
@@ -253,6 +261,20 @@ public class AnnotationFields extends AnnotationParser {
       }
     }
 
+  }
+
+  /**
+   * Return true if the validation is on all validation groups and hence
+   * can be applied to DDL generation.
+   */
+  private boolean isNotNullOnAllValidationGroups(Class<?>[] groups) {
+    if (groups.length == 0) {
+      return true;
+    }
+    if (groups.length == 1 && javax.validation.groups.Default.class.isAssignableFrom(groups[0])) {
+      return true;
+    }
+    return false;
   }
 
   private void setEncryption(DeployBeanProperty prop, boolean dbEncString, int dbLen) {

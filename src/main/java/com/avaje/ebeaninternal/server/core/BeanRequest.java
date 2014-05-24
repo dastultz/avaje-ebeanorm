@@ -2,6 +2,11 @@ package com.avaje.ebeaninternal.server.core;
 
 import java.sql.Connection;
 
+import javax.persistence.PersistenceException;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import com.avaje.ebean.EbeanServer;
 import com.avaje.ebeaninternal.api.SpiEbeanServer;
 import com.avaje.ebeaninternal.api.SpiTransaction;
@@ -11,21 +16,23 @@ import com.avaje.ebeaninternal.api.SpiTransaction;
  */
 public abstract class BeanRequest {
 
+  private static final Logger log = LoggerFactory.getLogger(BeanRequest.class);
+  
 	/**
 	 * The server processing the request.
 	 */
-	final SpiEbeanServer ebeanServer;
+	protected final SpiEbeanServer ebeanServer;
 
-	final String serverName;
+	protected final String serverName;
 
 	/**
 	 * The transaction this is part of.
 	 */
-	SpiTransaction transaction;
+	protected SpiTransaction transaction;
 
-	boolean createdTransaction;
+	protected boolean createdTransaction;
 
-	boolean readOnly;
+	protected boolean readOnly;
 
 	public BeanRequest(SpiEbeanServer ebeanServer, SpiTransaction t) {
 		this.ebeanServer = ebeanServer;
@@ -84,7 +91,14 @@ public abstract class BeanRequest {
 	 */
 	public void rollbackTransIfRequired() {
 		if (createdTransaction) {
-			transaction.rollback();
+		  try {
+		    transaction.rollback();
+		  } catch (PersistenceException e) {
+		    // Just log this and carry on. A previous exception has been
+		    // thrown and if this rollback throws exception it likely means
+		    // that the connection is broken (and the datasource and db will cleanup)
+		    log.error("Error trying to rollack a transaction (after a prior exception thrown)", e);
+		  }
 		}
 	}
 
@@ -95,6 +109,10 @@ public abstract class BeanRequest {
 	public EbeanServer getEbeanServer() {
 		return ebeanServer;
 	}
+
+  public SpiEbeanServer getServer() {
+    return ebeanServer;
+  }
 
 	/**
 	 * Return the Transaction associated with this request.

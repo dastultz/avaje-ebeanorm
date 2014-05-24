@@ -8,11 +8,14 @@ import java.util.Map;
 import java.util.Set;
 
 import com.avaje.ebean.bean.BeanCollectionLoader;
+import com.avaje.ebean.bean.EntityBean;
 
 /**
  * Map capable of lazy loading.
  */
 public final class BeanMap<K, E> extends AbstractBeanCollection<E> implements Map<K, E> {
+
+  private static final long serialVersionUID = 1L;
 
   /**
    * The underlying map implementation.
@@ -33,10 +36,22 @@ public final class BeanMap<K, E> extends AbstractBeanCollection<E> implements Ma
     this(new LinkedHashMap<K, E>());
   }
 
-  public BeanMap(BeanCollectionLoader ebeanServer, Object ownerBean, String propertyName) {
+  public BeanMap(BeanCollectionLoader ebeanServer, EntityBean ownerBean, String propertyName) {
     super(ebeanServer, ownerBean, propertyName);
   }
+  
+  public boolean isEmptyAndUntouched() {
+    return !touched && (map == null || map.isEmpty());
+  }
 
+  @SuppressWarnings("unchecked")
+  public void internalPut(Object key, Object bean) {
+    if (map == null) {
+      map = new LinkedHashMap<K, E>();
+    }
+    map.put((K)key, (E)bean);
+  }
+  
   public void internalAdd(Object bean) {
     throw new RuntimeException("Not allowed for map");
   }
@@ -75,16 +90,24 @@ public final class BeanMap<K, E> extends AbstractBeanCollection<E> implements Ma
           map = new LinkedHashMap<K, E>();
         }
       }
-      touched();
+      touched(true);
     }
   }
 
+  private void initAsUntouched() {
+    init(false);
+  }
+  
   private void init() {
+    init(true);
+  }
+  
+  private void init(boolean setTouched) {
     synchronized (this) {
       if (map == null) {
         lazyLoadCollection(false);
       }
-      touched();
+      touched(setTouched);
     }
   }
 
@@ -104,14 +127,23 @@ public final class BeanMap<K, E> extends AbstractBeanCollection<E> implements Ma
   }
 
   /**
-   * Returns the map entrySet iterator.
+   * Returns the collection of beans (map values).
+   */
+  public Collection<E> getActualDetails() {
+    return map.values();
+  }
+  
+  
+  /**
+   * Returns the map entrySet.
    * <p>
    * This is because the key values may need to be set against the details (so
    * they don't need to be set twice).
    * </p>
    */
-  public Collection<E> getActualDetails() {
-    return map.values();
+  public Collection<?> getActualEntries() {
+    return map.entrySet();
+
   }
 
   /**
@@ -192,7 +224,7 @@ public final class BeanMap<K, E> extends AbstractBeanCollection<E> implements Ma
   }
 
   public boolean isEmpty() {
-    init();
+    initAsUntouched();
     return map.isEmpty();
   }
 

@@ -93,7 +93,7 @@ public class DefaultDbSqlContext implements DbSqlContext {
     joinStack.push(node);
   }
 
-  public void addJoin(String type, String table, TableJoinColumn[] cols, String a1, String a2) {
+  public void addJoin(String type, String table, TableJoinColumn[] cols, String a1, String a2, String inheritance) {
 
     if (tableJoins == null) {
       tableJoins = new HashSet<String>();
@@ -123,6 +123,15 @@ public class DefaultDbSqlContext implements DbSqlContext {
       sb.append(" = ");
       sb.append(a1);
       sb.append(".").append(pair.getLocalDbColumn());
+    }
+
+
+    // add on any inheritance where clause
+    if (inheritance != null && inheritance.length() > 0){
+    	sb.append(" and ");
+    	sb.append(a2);
+    	sb.append(".");
+    	sb.append(inheritance);
     }
 
     sb.append(" ");
@@ -166,12 +175,11 @@ public class DefaultDbSqlContext implements DbSqlContext {
     return this;
   }
 
-  public void appendFormulaJoin(String sqlFormulaJoin, boolean forceOuterJoin) {
+  public void appendFormulaJoin(String sqlFormulaJoin, SqlJoinType joinType) {
 
     // replace ${ta} place holder with the real table alias...
     String tableAlias = tableAliasStack.peek();
-    String converted = StringHelper
-        .replaceString(sqlFormulaJoin, tableAliasPlaceHolder, tableAlias);
+    String converted = StringHelper.replaceString(sqlFormulaJoin, tableAliasPlaceHolder, tableAlias);
 
     if (formulaJoins == null) {
       formulaJoins = new HashSet<String>();
@@ -186,7 +194,7 @@ public class DefaultDbSqlContext implements DbSqlContext {
     formulaJoins.add(converted);
 
     sb.append(" ");
-    if (forceOuterJoin) {
+    if (joinType == SqlJoinType.OUTER) {
       if ("join".equals(sqlFormulaJoin.substring(0, 4).toLowerCase())) {
         // prepend left outer as we are in the 'many' part
         append(" left outer ");

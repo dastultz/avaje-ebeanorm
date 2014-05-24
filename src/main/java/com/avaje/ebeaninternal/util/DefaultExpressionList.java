@@ -14,12 +14,13 @@ import com.avaje.ebean.FutureList;
 import com.avaje.ebean.FutureRowCount;
 import com.avaje.ebean.Junction;
 import com.avaje.ebean.OrderBy;
+import com.avaje.ebean.PagedList;
 import com.avaje.ebean.PagingList;
 import com.avaje.ebean.Query;
 import com.avaje.ebean.QueryIterator;
-import com.avaje.ebean.QueryListener;
 import com.avaje.ebean.QueryResultVisitor;
 import com.avaje.ebean.event.BeanQueryRequest;
+import com.avaje.ebeaninternal.api.HashQueryPlanBuilder;
 import com.avaje.ebeaninternal.api.ManyWhereJoins;
 import com.avaje.ebeaninternal.api.SpiExpression;
 import com.avaje.ebeaninternal.api.SpiExpressionList;
@@ -33,15 +34,14 @@ public class DefaultExpressionList<T> implements SpiExpressionList<T> {
 
   private static final long serialVersionUID = -6992345500247035947L;
 
-  private final ArrayList<SpiExpression> list = new ArrayList<SpiExpression>();
+  protected final List<SpiExpression> list;
 
-  private final Query<T> query;
+  protected final Query<T> query;
 
-  private final ExpressionList<T> parentExprList;
+  protected final ExpressionList<T> parentExprList;
 
-  private transient ExpressionFactory expr;
+  protected transient ExpressionFactory expr;
 
-  private final String exprLang;
   private final String listAndStart;
   private final String listAndEnd;
   private final String listAndJoin;
@@ -51,25 +51,21 @@ public class DefaultExpressionList<T> implements SpiExpressionList<T> {
   }
 
   public DefaultExpressionList(Query<T> query, ExpressionFactory expr, ExpressionList<T> parentExprList) {
+    this(query, expr, parentExprList, new ArrayList<SpiExpression>());
+  }
+  
+  protected DefaultExpressionList(Query<T> query, ExpressionFactory expr, ExpressionList<T> parentExprList, List<SpiExpression> list) {
+    this.list = list;
     this.query = query;
     this.expr = expr;
-    this.exprLang = expr.getLang();
     this.parentExprList = parentExprList;
 
-    if ("ldap".equals(exprLang)) {
-      // Language is LDAP
-      listAndStart = "(&";
-      listAndEnd = ")";
-      listAndJoin = "";
-
-    } else {
-      listAndStart = "";
-      listAndEnd = "";
-      listAndJoin = " and ";
-    }
+    this.listAndStart = "";
+    this.listAndEnd = "";
+    this.listAndJoin = " and ";
   }
 
-  public void trimPath(int prefixTrim) {
+  public SpiExpressionList<?> trimPath(int prefixTrim) {
     throw new RuntimeException("Only allowed on FilterExpressionList");
   }
 
@@ -157,6 +153,11 @@ public class DefaultExpressionList<T> implements SpiExpressionList<T> {
     return query.findPagingList(pageSize);
   }
 
+  @Override
+  public PagedList<T> findPagedList(int pageIndex, int pageSize) {
+    return query.findPagedList(pageIndex, pageSize);
+  }
+
   public int findRowCount() {
     return query.findRowCount();
   }
@@ -217,16 +218,8 @@ public class DefaultExpressionList<T> implements SpiExpressionList<T> {
     return query.setMaxRows(maxRows);
   }
 
-  public Query<T> setBackgroundFetchAfter(int backgroundFetchAfter) {
-    return query.setBackgroundFetchAfter(backgroundFetchAfter);
-  }
-
   public Query<T> setMapKey(String mapKey) {
     return query.setMapKey(mapKey);
-  }
-
-  public Query<T> setListener(QueryListener<T> queryListener) {
-    return query.setListener(queryListener);
   }
 
   public Query<T> setUseCache(boolean useCache) {
@@ -283,26 +276,24 @@ public class DefaultExpressionList<T> implements SpiExpressionList<T> {
    * Calculate a hash based on the expressions but excluding the actual bind
    * values.
    */
-  public int queryAutoFetchHash() {
-    int hash = DefaultExpressionList.class.getName().hashCode();
+  public void queryAutoFetchHash(HashQueryPlanBuilder builder) {
+    builder.add(DefaultExpressionList.class);
     for (int i = 0, size = list.size(); i < size; i++) {
       SpiExpression expression = list.get(i);
-      hash = hash * 31 + expression.queryAutoFetchHash();
+      expression.queryAutoFetchHash(builder);
     }
-    return hash;
   }
 
   /**
    * Calculate a hash based on the expressions but excluding the actual bind
    * values.
    */
-  public int queryPlanHash(BeanQueryRequest<?> request) {
-    int hash = DefaultExpressionList.class.getName().hashCode();
+  public void queryPlanHash(BeanQueryRequest<?> request, HashQueryPlanBuilder builder) {
+    builder.add(DefaultExpressionList.class);
     for (int i = 0, size = list.size(); i < size; i++) {
       SpiExpression expression = list.get(i);
-      hash = hash * 31 + expression.queryPlanHash(request);
+      expression.queryPlanHash(request, builder);
     }
-    return hash;
   }
 
   /**

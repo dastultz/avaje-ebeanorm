@@ -1,10 +1,12 @@
 package com.avaje.ebeaninternal.server.expression;
 
+import com.avaje.ebean.bean.EntityBean;
 import com.avaje.ebean.event.BeanQueryRequest;
+import com.avaje.ebeaninternal.api.HashQueryPlanBuilder;
 import com.avaje.ebeaninternal.api.SpiExpressionRequest;
 import com.avaje.ebeaninternal.server.el.ElPropertyValue;
 
-public class SimpleExpression extends AbstractExpression implements LuceneAwareExpression {
+public class SimpleExpression extends AbstractExpression {
 
   private static final long serialVersionUID = -382881395755603790L;
 
@@ -32,8 +34,8 @@ public class SimpleExpression extends AbstractExpression implements LuceneAwareE
 
   private final Object value;
 
-  public SimpleExpression(FilterExprPath pathPrefix, String propertyName, Op type, Object value) {
-    super(pathPrefix, propertyName);
+  public SimpleExpression(String propertyName, Op type, Object value) {
+    super(propertyName);
     this.type = type;
     this.value = value;
   }
@@ -47,7 +49,7 @@ public class SimpleExpression extends AbstractExpression implements LuceneAwareE
     ElPropertyValue prop = getElProp(request);
     if (prop != null) {
       if (prop.isAssocId()) {
-        Object[] ids = prop.getAssocOneIdValues(value);
+        Object[] ids = prop.getAssocOneIdValues((EntityBean)value);
         if (ids != null) {
           for (int i = 0; i < ids.length; i++) {
             request.addBindValue(ids[i]);
@@ -91,15 +93,13 @@ public class SimpleExpression extends AbstractExpression implements LuceneAwareE
   /**
    * Based on the type and propertyName.
    */
-  public int queryAutoFetchHash() {
-    int hc = SimpleExpression.class.getName().hashCode();
-    hc = hc * 31 + propName.hashCode();
-    hc = hc * 31 + type.name().hashCode();
-    return hc;
+  public void queryAutoFetchHash(HashQueryPlanBuilder builder) {
+    builder.add(SimpleExpression.class).add(propName).add(type.name());
+    builder.bind(1);
   }
 
-  public int queryPlanHash(BeanQueryRequest<?> request) {
-    return queryAutoFetchHash();
+  public void queryPlanHash(BeanQueryRequest<?> request, HashQueryPlanBuilder builder) {
+    queryAutoFetchHash(builder);
   }
 
   public int queryBindHash() {

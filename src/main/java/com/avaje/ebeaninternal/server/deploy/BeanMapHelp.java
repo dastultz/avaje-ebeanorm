@@ -11,6 +11,7 @@ import com.avaje.ebean.Transaction;
 import com.avaje.ebean.bean.BeanCollection;
 import com.avaje.ebean.bean.BeanCollectionAdd;
 import com.avaje.ebean.bean.BeanCollectionLoader;
+import com.avaje.ebean.bean.EntityBean;
 import com.avaje.ebean.common.BeanMap;
 import com.avaje.ebeaninternal.server.text.json.WriteJsonContext;
 
@@ -93,7 +94,7 @@ public final class BeanMapHelp<T> implements BeanCollectionHelp<T> {
 			this.map = map;
 		}
 		
-		public void addBean(Object bean) {
+		public void addBean(EntityBean bean) {
 			Object keyValue = beanProperty.getValue(bean);
 			map.put(keyValue, bean);
 		}
@@ -101,30 +102,39 @@ public final class BeanMapHelp<T> implements BeanCollectionHelp<T> {
 
 	@SuppressWarnings("rawtypes")
     public Object createEmpty(boolean vanilla) {
-		return vanilla ? new LinkedHashMap() : new BeanMap();
+	  if (vanilla) {
+	    return new LinkedHashMap();
+	  }
+		BeanMap beanMap = new BeanMap();
+		if (many != null) {
+		  beanMap.setModifyListening(many.getModifyListenMode());
+		}
+		return beanMap;
 	}
 	
-	@SuppressWarnings("unchecked")
-	public void add(BeanCollection<?> collection, Object bean) {
+	public void add(BeanCollection<?> collection, EntityBean bean) {
 
 		Object keyValue = beanProperty.getValueIntercept(bean);
 
-		Map<Object, Object> map = (Map<Object, Object>) collection;
-		map.put(keyValue, bean);
+		((BeanMap<?,?>) collection).internalPut(keyValue, bean);
 	}
 
 	@SuppressWarnings({ "unchecked", "rawtypes" })
-	public BeanCollection<T> createReference(Object parentBean, String propertyName) {
+	public BeanCollection<T> createReference(EntityBean parentBean, String propertyName) {
 
-		return new BeanMap(loader, parentBean, propertyName);
+	  BeanMap beanMap = new BeanMap(loader, parentBean, propertyName);
+    if (many != null) {
+      beanMap.setModifyListening(many.getModifyListenMode());
+    }
+    return beanMap;
 	}
 
-	public void refresh(EbeanServer server, Query<?> query, Transaction t, Object parentBean) {
+	public void refresh(EbeanServer server, Query<?> query, Transaction t, EntityBean parentBean) {
 		BeanMap<?, ?> newBeanMap = (BeanMap<?, ?>) server.findMap(query, t);
 		refresh(newBeanMap, parentBean);
 	}
 	
-	public void refresh(BeanCollection<?> bc, Object parentBean) {
+	public void refresh(BeanCollection<?> bc, EntityBean parentBean) {
 
 		BeanMap<?, ?> newBeanMap = (BeanMap<?, ?>) bc;
 		Map<?, ?> current = (Map<?, ?>) many.getValue(parentBean);
@@ -175,7 +185,7 @@ public final class BeanMapHelp<T> implements BeanCollectionHelp<T> {
             }
             //FIXME: json write map key ...
             Object detailBean = entry.getValue();
-            targetDescriptor.jsonWrite(ctx, detailBean);
+            targetDescriptor.jsonWrite(ctx, (EntityBean)detailBean);
         }
         ctx.endAssocMany();      
     }

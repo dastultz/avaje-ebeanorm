@@ -6,7 +6,6 @@ import java.util.List;
 import com.avaje.ebean.ExpressionList;
 import com.avaje.ebean.OrderBy;
 import com.avaje.ebean.Query;
-import com.avaje.ebean.QueryListener;
 import com.avaje.ebean.bean.BeanCollectionTouched;
 import com.avaje.ebean.bean.CallStack;
 import com.avaje.ebean.bean.EntityBean;
@@ -15,6 +14,7 @@ import com.avaje.ebean.bean.PersistenceContext;
 import com.avaje.ebean.event.BeanQueryRequest;
 import com.avaje.ebeaninternal.server.autofetch.AutoFetchManager;
 import com.avaje.ebeaninternal.server.deploy.BeanDescriptor;
+import com.avaje.ebeaninternal.server.deploy.BeanPropertyAssocMany;
 import com.avaje.ebeaninternal.server.deploy.TableJoin;
 import com.avaje.ebeaninternal.server.query.CancelableQuery;
 import com.avaje.ebeaninternal.server.querydefn.NaturalKeyBindParam;
@@ -79,11 +79,6 @@ public interface SpiQuery<T> extends Query<T> {
          */
         SUBQUERY
     }
-
-    /**
-     * Set total hits when querying against lucene.
-     */
-    public void setTotalHits(int totalHits);
     
     /**
      * Return true if select all properties was used to ensure the property
@@ -154,10 +149,22 @@ public interface SpiQuery<T> extends Query<T> {
     public String getLoadMode();
 
     /**
+     * This becomes a lazy loading query for a many relationship.
+     */
+    public void setLazyLoadForParents(List<Object> parentIds, BeanPropertyAssocMany<?> many);
+
+    /**
+     * Return the lazy loading 'many' property.
+     */
+    public BeanPropertyAssocMany<?> getLazyLoadForParentsProperty();
+    
+    /**
+     * Return the list of parent Id's for lazy loading.
+     */
+    public List<Object> getLazyLoadForParentIds();
+    
+    /**
      * Set the load mode (+lazy or +query) and the load description.
-     * 
-     * @param loadMode
-     * @param loadDescription
      */
     public void setLoadDescription(String loadMode, String loadDescription);
 
@@ -253,10 +260,25 @@ public interface SpiQuery<T> extends Query<T> {
      */
     public Boolean isAutofetch();
 
-//    /**
-//     * Return explicit forUpdate setting or null.
-//     */
-//    public boolean isForUpdate();
+    /**
+     * Set to true if you want to capture executed secondary queries. 
+     */
+    public void setLogSecondaryQuery(boolean logSecondaryQuery);
+
+    /**
+     * Return true if executed secondary queries should be captured.
+     */
+    public boolean isLogSecondaryQuery();
+
+    /**
+     * Return the list of secondary queries that were executed.
+     */
+    public List<SpiQuery<?>> getLoggedSecondaryQueries(); 
+    
+    /**
+     * Log an executed secondary query.
+     */
+    public void logSecondaryQuery(SpiQuery<?> query);
 
     /**
      * If return null then no autoFetch profiling for this query. If a
@@ -341,7 +363,7 @@ public interface SpiQuery<T> extends Query<T> {
      * tuning/modifying the query.
      * </p>
      */
-    public int queryAutofetchHash();
+    public HashQueryPlan queryAutofetchHash(HashQueryPlanBuilder builder);
 
     /**
      * Identifies queries that are the same bar the bind variables.
@@ -354,7 +376,7 @@ public interface SpiQuery<T> extends Query<T> {
      * Excludes the actual bind values (as they don't effect the query plan).
      * </p>
      */
-    public int queryPlanHash(BeanQueryRequest<?> request);
+    public HashQueryPlan queryPlanHash(BeanQueryRequest<?> request);
 
     /**
      * Calculate a hash based on the bind values used in the query.
@@ -368,7 +390,7 @@ public interface SpiQuery<T> extends Query<T> {
     /**
      * Identifies queries that are exactly the same including bind variables.
      */
-    public int queryHash();
+    public HashQuery queryHash();
 
     /**
      * Return true if this is a query based on a SqlSelect rather than
@@ -502,12 +524,6 @@ public interface SpiQuery<T> extends Query<T> {
     public String getMapKey();
 
     /**
-     * Return the number of rows after which fetching should occur in a
-     * background thread.
-     */
-    public int getBackgroundFetchAfter();
-
-    /**
      * Return the maximum number of rows to return in the query.
      */
     public int getMaxRows();
@@ -536,19 +552,6 @@ public interface SpiQuery<T> extends Query<T> {
      * Return the Id value.
      */
     public Object getId();
-
-    /**
-     * Return the queryListener.
-     */
-    public QueryListener<T> getListener();
-
-    /**
-     * Return true if this query should use its own transaction.
-     * <p>
-     * This is true for background fetching and when using QueryListener.
-     * </p>
-     */
-    public boolean createOwnTransaction();
 
     /**
      * Set the generated sql for debug purposes.

@@ -14,7 +14,7 @@ import com.avaje.ebean.FutureRowCount;
 import com.avaje.ebean.OrderBy;
 import com.avaje.ebean.PagingList;
 import com.avaje.ebean.Query;
-import com.avaje.ebean.QueryListener;
+import com.avaje.ebeaninternal.api.SpiExpressionList;
 import com.avaje.ebeaninternal.server.expression.FilterExprPath;
 
 public class FilterExpressionList<T> extends DefaultExpressionList<T> {
@@ -24,6 +24,12 @@ public class FilterExpressionList<T> extends DefaultExpressionList<T> {
     private final Query<T> rootQuery;
     
     private final FilterExprPath pathPrefix;
+
+    public FilterExpressionList(FilterExprPath pathPrefix, FilterExpressionList<T> original) {
+      super(null, original.expr, null, original.getUnderlyingList());
+      this.pathPrefix = pathPrefix;
+      this.rootQuery = original.rootQuery;
+    }
     
     public FilterExpressionList(FilterExprPath pathPrefix, ExpressionFactory expr, Query<T> rootQuery) {
         super(null, expr, null);
@@ -31,8 +37,8 @@ public class FilterExpressionList<T> extends DefaultExpressionList<T> {
         this.rootQuery = rootQuery;
     }
     
-    public void trimPath(int prefixTrim) {
-        pathPrefix.trimPath(prefixTrim);
+    public SpiExpressionList<?> trimPath(int prefixTrim) {
+        return new FilterExpressionList<T>(pathPrefix.trimPath(prefixTrim), this);
     }
     
     public FilterExprPath getPathPrefix() {
@@ -121,16 +127,8 @@ public class FilterExpressionList<T> extends DefaultExpressionList<T> {
         throw new PersistenceException(notAllowedMessage);        
     }
 
-    public Query<T> setBackgroundFetchAfter(int backgroundFetchAfter) {
-        return rootQuery.setBackgroundFetchAfter(backgroundFetchAfter);
-    }
-
     public Query<T> setFirstRow(int firstRow) {
         return rootQuery.setFirstRow(firstRow);
-    }
-
-    public Query<T> setListener(QueryListener<T> queryListener) {
-        return rootQuery.setListener(queryListener);
     }
 
     public Query<T> setMapKey(String mapKey) {

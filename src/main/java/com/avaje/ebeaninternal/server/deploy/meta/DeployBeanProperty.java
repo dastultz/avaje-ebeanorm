@@ -86,6 +86,8 @@ public class DeployBeanProperty {
 
     private boolean unique;
 
+    private boolean discriminator;
+    
     /**
      * The length or precision of the DB column.
      */
@@ -198,6 +200,8 @@ public class DeployBeanProperty {
      */
     private Method writeMethod;
 
+    private int propertyIndex;
+    
     private BeanReflectGetter getter;
 
     private BeanReflectSetter setter;
@@ -335,6 +339,20 @@ public class DeployBeanProperty {
     }
 
     /**
+     * Mark this property as mapping to the discriminator column.
+     */
+    public void setDiscriminator(boolean discriminator) {
+      this.discriminator = discriminator;
+    }
+
+    /**
+     * Return true if this property maps to the inheritance discriminator column.s
+     */
+    public boolean isDiscriminator() {
+      return discriminator;
+    }
+    
+    /**
      * Return true if the property is encrypted in java rather than in the DB.
      */
     public boolean isLocalEncrypted() {
@@ -408,6 +426,14 @@ public class DeployBeanProperty {
 
     public void setScalarType(ScalarType<?> scalarType) {
         this.scalarType = scalarType;
+    }
+
+    public int getPropertyIndex() {
+      return propertyIndex;
+    }
+
+    public void setPropertyIndex(int propertyIndex) {
+      this.propertyIndex = propertyIndex;
     }
 
     public BeanReflectGetter getGetter() {

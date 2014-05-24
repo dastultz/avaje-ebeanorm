@@ -12,11 +12,12 @@ import com.avaje.ebean.FutureList;
 import com.avaje.ebean.FutureRowCount;
 import com.avaje.ebean.Junction;
 import com.avaje.ebean.OrderBy;
+import com.avaje.ebean.PagedList;
 import com.avaje.ebean.PagingList;
 import com.avaje.ebean.QueryIterator;
-import com.avaje.ebean.QueryListener;
 import com.avaje.ebean.QueryResultVisitor;
 import com.avaje.ebean.event.BeanQueryRequest;
+import com.avaje.ebeaninternal.api.HashQueryPlanBuilder;
 import com.avaje.ebeaninternal.api.ManyWhereJoins;
 import com.avaje.ebeaninternal.api.SpiExpression;
 import com.avaje.ebeaninternal.api.SpiExpressionRequest;
@@ -39,7 +40,7 @@ abstract class JunctionExpression<T> implements Junction<T>, SpiExpression, Expr
     private static final long serialVersionUID = -645619859900030678L;
 
     Conjunction(com.avaje.ebean.Query<T> query, ExpressionList<T> parent) {
-      super(AND, query, parent);
+      super(false, AND, query, parent);
     }
   }
 
@@ -48,17 +49,21 @@ abstract class JunctionExpression<T> implements Junction<T>, SpiExpression, Expr
     private static final long serialVersionUID = -8464470066692221413L;
 
     Disjunction(com.avaje.ebean.Query<T> query, ExpressionList<T> parent) {
-      super(OR, query, parent);
+      super(true, OR, query, parent);
     }
   }
 
-  // private final ArrayList<SpiExpression> list = new
-  // ArrayList<SpiExpression>();
   private final DefaultExpressionList<T> exprList;
 
   private final String joinType;
 
-  JunctionExpression(String joinType, com.avaje.ebean.Query<T> query, ExpressionList<T> parent) {
+  /**
+   * If true then a disjunction which means outer joins are required.
+   */
+  private final boolean disjunction;
+  
+  JunctionExpression(boolean disjunction, String joinType, com.avaje.ebean.Query<T> query, ExpressionList<T> parent) {
+    this.disjunction = disjunction;
     this.joinType = joinType;
     this.exprList = new DefaultExpressionList<T>(query, parent);
   }
@@ -67,8 +72,19 @@ abstract class JunctionExpression<T> implements Junction<T>, SpiExpression, Expr
 
     List<SpiExpression> list = exprList.internalList();
 
+    // get the current state for 'require outer joins'
+    boolean parentOuterJoins = manyWhereJoin.isRequireOuterJoins();
+    if (disjunction) {
+      // turn on outer joins required for disjunction expressions
+      manyWhereJoin.setRequireOuterJoins(true);
+    }
+    
     for (int i = 0; i < list.size(); i++) {
       list.get(i).containsMany(desc, manyWhereJoin);
+    }
+    if (disjunction && !parentOuterJoins) {
+      // restore state to not forcing outer joins
+      manyWhereJoin.setRequireOuterJoins(false);
     }
   }
 
@@ -115,28 +131,20 @@ abstract class JunctionExpression<T> implements Junction<T>, SpiExpression, Expr
   /**
    * Based on Junction type and all the expression contained.
    */
-  public int queryAutoFetchHash() {
-    int hc = JunctionExpression.class.getName().hashCode();
-    hc = hc * 31 + joinType.hashCode();
-
+  public void queryAutoFetchHash(HashQueryPlanBuilder builder) {
+    builder.add(JunctionExpression.class).add(joinType);
     List<SpiExpression> list = exprList.internalList();
     for (int i = 0; i < list.size(); i++) {
-      hc = hc * 31 + list.get(i).queryAutoFetchHash();
+      list.get(i).queryAutoFetchHash(builder);
     }
-
-    return hc;
   }
 
-  public int queryPlanHash(BeanQueryRequest<?> request) {
-    int hc = JunctionExpression.class.getName().hashCode();
-    hc = hc * 31 + joinType.hashCode();
-
+  public void queryPlanHash(BeanQueryRequest<?> request, HashQueryPlanBuilder builder) {
+    builder.add(JunctionExpression.class).add(joinType);
     List<SpiExpression> list = exprList.internalList();
     for (int i = 0; i < list.size(); i++) {
-      hc = hc * 31 + list.get(i).queryPlanHash(request);
+      list.get(i).queryPlanHash(request, builder);
     }
-
-    return hc;
   }
 
   public int queryBindHash() {
@@ -236,6 +244,11 @@ abstract class JunctionExpression<T> implements Junction<T>, SpiExpression, Expr
 
   public PagingList<T> findPagingList(int pageSize) {
     return exprList.findPagingList(pageSize);
+  }
+  
+  @Override
+  public PagedList<T> findPagedList(int pageIndex, int pageSize) {
+    return exprList.findPagedList(pageIndex, pageSize);
   }
 
   public int findRowCount() {
@@ -382,16 +395,8 @@ abstract class JunctionExpression<T> implements Junction<T>, SpiExpression, Expr
     return exprList.select(properties);
   }
 
-  public com.avaje.ebean.Query<T> setBackgroundFetchAfter(int backgroundFetchAfter) {
-    return exprList.setBackgroundFetchAfter(backgroundFetchAfter);
-  }
-
   public com.avaje.ebean.Query<T> setFirstRow(int firstRow) {
     return exprList.setFirstRow(firstRow);
-  }
-
-  public com.avaje.ebean.Query<T> setListener(QueryListener<T> queryListener) {
-    return exprList.setListener(queryListener);
   }
 
   public com.avaje.ebean.Query<T> setMapKey(String mapKey) {

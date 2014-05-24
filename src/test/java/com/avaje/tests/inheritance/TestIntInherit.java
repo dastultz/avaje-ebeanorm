@@ -1,14 +1,17 @@
 package com.avaje.tests.inheritance;
 
-import junit.framework.Assert;
-import junit.framework.TestCase;
 
+import org.junit.Assert;
+import org.junit.Test;
+
+import com.avaje.ebean.BaseTestCase;
 import com.avaje.ebean.Ebean;
 import com.avaje.tests.model.basic.TIntChild;
 import com.avaje.tests.model.basic.TIntRoot;
 
-public class TestIntInherit extends TestCase {
+public class TestIntInherit extends BaseTestCase {
 
+  @Test
 	public void testMe() {
 
 		TIntRoot r = new TIntRoot();

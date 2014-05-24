@@ -12,9 +12,10 @@ import java.util.Set;
 import com.avaje.ebean.ExpressionFactory;
 import com.avaje.ebean.FetchConfig;
 import com.avaje.ebean.OrderBy;
-import com.avaje.ebean.OrderBy.Property;
 import com.avaje.ebean.Query;
 import com.avaje.ebean.event.BeanQueryRequest;
+import com.avaje.ebeaninternal.api.HashQueryPlanBuilder;
+import com.avaje.ebeaninternal.api.SpiExpression;
 import com.avaje.ebeaninternal.api.SpiExpressionFactory;
 import com.avaje.ebeaninternal.api.SpiExpressionList;
 import com.avaje.ebeaninternal.api.SpiQuery;
@@ -170,7 +171,7 @@ public class OrmQueryProperties implements Serializable {
         if (filterMany == null){
             FilterExprPath exprPath = new FilterExprPath(path);
             SpiExpressionFactory queryEf = (SpiExpressionFactory)rootQuery.getExpressionFactory();
-            ExpressionFactory filterEf = queryEf.createExpressionFactory(exprPath);
+            ExpressionFactory filterEf = queryEf.createExpressionFactory();//exprPath);
             filterMany = new FilterExpressionList(exprPath, filterEf, rootQuery);
             // by default we need to make this a 'query join' now
             queryFetchAll = true;
@@ -187,8 +188,7 @@ public class OrmQueryProperties implements Serializable {
         if (filterMany == null){
             return null;
         }
-        filterMany.trimPath(trimPath);
-        return filterMany;
+        return filterMany.trimPath(trimPath);
     }
     
     /**
@@ -230,12 +230,17 @@ public class OrmQueryProperties implements Serializable {
     public void configureBeanQuery(SpiQuery<?> query) {
 
         if (trimmedProperties != null && trimmedProperties.length() > 0) {
-            query.select(trimmedProperties);
-            if (filterMany != null){
-                query.setFilterMany(path, filterMany);
-            }
+          query.select(trimmedProperties);
         }
-
+        
+        if (filterMany != null){
+          SpiExpressionList<?> trimPath = filterMany.trimPath(path.length()+1);
+          List<SpiExpression> underlyingList = trimPath.getUnderlyingList();
+          for (SpiExpression spiExpression : underlyingList) {
+            query.where().add(spiExpression);            
+          }
+        }
+        
         if (secondaryChildren != null) {
             int trimPath = path.length() + 1;
             for (int i = 0; i < secondaryChildren.size(); i++) {
@@ -248,41 +253,7 @@ public class OrmQueryProperties implements Serializable {
         }
         
         if (orderBy != null){
-            List<Property> orderByProps = orderBy.getProperties();
-            for (int i = 0; i < orderByProps.size(); i++) {
-                orderByProps.get(i).trim(path);
-            }
-            query.setOrder(orderBy);
-        }
-    }
-
-    /**
-     * Define the select and joins for this query.
-     */
-    @SuppressWarnings("unchecked")
-    public void configureManyQuery(SpiQuery<?> query) {
-
-        if (trimmedProperties != null && trimmedProperties.length() > 0) {
-            query.fetch(query.getLazyLoadManyPath(), trimmedProperties);
-        }
-        if (filterMany != null){
-            query.setFilterMany(path, filterMany);
-        }   
-        if (secondaryChildren != null) {
-
-            int trimlen = path.length() - query.getLazyLoadManyPath().length();
-
-            for (int i = 0; i < secondaryChildren.size(); i++) {
-                OrmQueryProperties p = secondaryChildren.get(i);
-                String path = p.getPath();
-                path = path.substring(trimlen);
-                query.fetch(path, p.getProperties(), p.getFetchConfig());
-                query.setFilterMany(path, p.getFilterManyTrimPath(trimlen));
-            }
-        }
-        
-        if (orderBy != null){
-            query.setOrder(orderBy);
+          query.setOrder(orderBy.copyWithTrim(path));
         }
     }
 
@@ -361,17 +332,18 @@ public class OrmQueryProperties implements Serializable {
      * Calculate the query plan hash.
      */
     @SuppressWarnings("unchecked")
-    public int queryPlanHash(BeanQueryRequest<?> request) {
-        
-        int hc = (path != null ? path.hashCode() : 1);
-        if (properties != null){
-            hc = hc * 31 + properties.hashCode();
-        } else {
-            hc = hc * 31 + (included != null ? included.hashCode() : 1);
-        }
-        hc = hc * 31 + (filterMany != null ? filterMany.queryPlanHash(request) : 1);
-        
-        return hc;
+    public void queryPlanHash(BeanQueryRequest<?> request, HashQueryPlanBuilder builder) {
+  
+      builder.add(path);
+      if (properties != null) {
+        builder.add(properties);
+      } else {
+        builder.add(included);
+      }
+      builder.add(filterMany != null);
+      if (filterMany != null) {
+        filterMany.queryPlanHash(request, builder);
+      }
     }
 
     public String getProperties() {
